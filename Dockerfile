@@ -32,4 +32,4 @@ RUN mkdir -p /config
 
 EXPOSE 9091
 
-ENTRYPOINT ["/app/plundrio"]
+ENTRYPOINT ["/app/plundrio", "run"]
