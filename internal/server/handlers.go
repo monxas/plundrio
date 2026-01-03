@@ -190,7 +190,8 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 		response.Transfers = append(response.Transfers, status)
 		response.ActiveTransfers++
 
-		if progress < 100 {
+		// Only count as incomplete if actively downloading (not processed/completed/failed)
+		if snapshot.State == download.TransferLifecycleDownloading || snapshot.State == download.TransferLifecycleInitial {
 			response.IncompleteCount++
 			response.TotalDownloadRate += downloadRate
 		}
