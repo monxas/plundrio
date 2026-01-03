@@ -121,12 +121,15 @@ func (s *Server) handleRPC(w http.ResponseWriter, r *http.Request) {
 
 // HealthResponse contains the health check response data
 type HealthResponse struct {
-	Status           string                 `json:"status"`
-	Uptime           string                 `json:"uptime"`
-	ActiveTransfers  int                    `json:"active_transfers"`
-	IncompleteCount  int                    `json:"incomplete_count"`
-	TotalDownloadRate int64                 `json:"total_download_rate_bytes"`
-	Transfers        []TransferHealthStatus `json:"transfers,omitempty"`
+	Status            string                 `json:"status"`
+	Uptime            string                 `json:"uptime"`
+	ActiveTransfers   int                    `json:"active_transfers"`
+	IncompleteCount   int                    `json:"incomplete_count"`
+	TotalDownloadRate int64                  `json:"total_download_rate_bytes"`
+	Transfers         []TransferHealthStatus `json:"transfers,omitempty"`
+	WorkerPool        *WorkerPoolHealth      `json:"worker_pool,omitempty"`
+	PutioTransfers    *PutioTransfersHealth  `json:"putio_transfers,omitempty"`
+	Issues            []string               `json:"issues,omitempty"`
 }
 
 // TransferHealthStatus contains status for a single transfer
@@ -140,37 +143,65 @@ type TransferHealthStatus struct {
 	TotalFiles     int32   `json:"total_files"`
 }
 
+// WorkerPoolHealth contains worker pool status
+type WorkerPoolHealth struct {
+	TotalWorkers    int    `json:"total_workers"`
+	ActiveDownloads int    `json:"active_downloads"`
+	QueuedJobs      int    `json:"queued_jobs"`
+	StallDetected   bool   `json:"stall_detected"`
+	LastActivity    string `json:"last_activity"`
+}
+
+// PutioTransfersHealth contains Put.io transfer status
+type PutioTransfersHealth struct {
+	TotalTransfers   int                     `json:"total_transfers"`
+	Downloading      int                     `json:"downloading"`
+	Seeding          int                     `json:"seeding"`
+	Completed        int                     `json:"completed"`
+	Errored          int                     `json:"errored"`
+	StuckCount       int                     `json:"stuck_count"`
+	StuckTransfers   []PutioStuckTransfer    `json:"stuck_transfers,omitempty"`
+}
+
+// PutioStuckTransfer represents a stuck transfer on Put.io
+type PutioStuckTransfer struct {
+	ID           int64  `json:"id"`
+	Name         string `json:"name"`
+	Status       string `json:"status"`
+	PercentDone  int    `json:"percent_done"`
+	Availability int    `json:"availability"`
+	Reason       string `json:"reason"`
+}
+
 var serverStartTime = time.Now()
 
 // handleHealth returns health status including download progress
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	coordinator := s.dlManager.GetCoordinator()
+	watchdog := s.dlManager.GetWatchdog()
 
 	response := HealthResponse{
-		Status:          "healthy",
-		Uptime:          time.Since(serverStartTime).Round(time.Second).String(),
-		ActiveTransfers: 0,
-		IncompleteCount: 0,
+		Status:            "healthy",
+		Uptime:            time.Since(serverStartTime).Round(time.Second).String(),
+		ActiveTransfers:   0,
+		IncompleteCount:   0,
 		TotalDownloadRate: 0,
-		Transfers:       []TransferHealthStatus{},
+		Transfers:         []TransferHealthStatus{},
+		Issues:            []string{},
 	}
 
-	// Get all active transfers
+	// Get all active transfers from coordinator
 	transfers := coordinator.GetAllTransfers()
 	for _, ctx := range transfers {
-		// Get a thread-safe snapshot of the transfer state
 		snapshot := ctx.GetSnapshot()
 
-		// Calculate progress
 		var progress float64
 		if snapshot.TotalSize > 0 {
 			progress = float64(snapshot.DownloadedSize) / float64(snapshot.TotalSize) * 100
 		}
 
-		// Calculate download rate (simplified - from coordinator)
 		var downloadRate int64 = 0
 		if snapshot.State == download.TransferLifecycleDownloading {
-			// Estimate rate based on time since start
 			elapsed := time.Since(snapshot.StartTime).Seconds()
 			if elapsed > 0 {
 				downloadRate = int64(float64(snapshot.DownloadedSize) / elapsed)
@@ -190,17 +221,97 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 		response.Transfers = append(response.Transfers, status)
 		response.ActiveTransfers++
 
-		// Only count as incomplete if actively downloading (not processed/completed/failed)
 		if snapshot.State == download.TransferLifecycleDownloading || snapshot.State == download.TransferLifecycleInitial {
 			response.IncompleteCount++
 			response.TotalDownloadRate += downloadRate
 		}
 	}
 
-	// Determine overall health
-	// Unhealthy if we have incomplete transfers with 0 download rate
+	// Get worker pool status from watchdog
+	if watchdog != nil {
+		wpStatus := watchdog.GetWorkerPoolStatus()
+		response.WorkerPool = &WorkerPoolHealth{
+			TotalWorkers:    wpStatus.TotalWorkers,
+			ActiveDownloads: wpStatus.ActiveDownloads,
+			QueuedJobs:      wpStatus.QueuedJobs,
+			StallDetected:   wpStatus.StallDetected,
+			LastActivity:    time.Since(wpStatus.LastActivity).Round(time.Second).String(),
+		}
+
+		if wpStatus.StallDetected {
+			response.Issues = append(response.Issues, "Worker pool stall detected")
+		}
+
+		// Get stuck Put.io transfers
+		stuckTransfers := watchdog.GetStuckPutioTransfers()
+		if len(stuckTransfers) > 0 {
+			var stuckList []PutioStuckTransfer
+			for _, st := range stuckTransfers {
+				stuckList = append(stuckList, PutioStuckTransfer{
+					ID:           st.ID,
+					Name:         st.Name,
+					Status:       st.Status,
+					PercentDone:  st.PercentDone,
+					Availability: st.Availability,
+					Reason:       st.StuckReason,
+				})
+			}
+			response.Issues = append(response.Issues, "Stuck transfers detected on Put.io")
+
+			// Add Put.io transfer info
+			processor := s.dlManager.GetTransferProcessor()
+			if processor != nil {
+				allTransfers := processor.GetTransfers()
+				downloading := 0
+				seeding := 0
+				completed := 0
+				errored := 0
+				for _, t := range allTransfers {
+					switch t.Status {
+					case "DOWNLOADING":
+						downloading++
+					case "SEEDING":
+						seeding++
+					case "COMPLETED":
+						completed++
+					case "ERROR":
+						errored++
+					}
+				}
+				response.PutioTransfers = &PutioTransfersHealth{
+					TotalTransfers: len(allTransfers),
+					Downloading:    downloading,
+					Seeding:        seeding,
+					Completed:      completed,
+					Errored:        errored,
+					StuckCount:     len(stuckList),
+					StuckTransfers: stuckList,
+				}
+			}
+		}
+	}
+
+	// Determine overall health status
 	if response.IncompleteCount > 0 && response.TotalDownloadRate == 0 {
 		response.Status = "stalled"
+		response.Issues = append(response.Issues, "Downloads stalled - no progress on incomplete transfers")
+	}
+
+	if response.WorkerPool != nil && response.WorkerPool.StallDetected {
+		response.Status = "stalled"
+	}
+
+	if response.PutioTransfers != nil && response.PutioTransfers.StuckCount > 0 {
+		if response.Status == "healthy" {
+			response.Status = "degraded"
+		}
+	}
+
+	if response.PutioTransfers != nil && response.PutioTransfers.Errored > 0 {
+		response.Issues = append(response.Issues, "Errored transfers on Put.io")
+		if response.Status == "healthy" {
+			response.Status = "degraded"
+		}
 	}
 
 	w.Header().Set("Content-Type", "application/json")

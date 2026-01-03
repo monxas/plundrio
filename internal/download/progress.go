@@ -85,6 +85,7 @@ func (m *Manager) monitorGrabDownloadProgress(ctx context.Context, state *Downlo
 					// Update transfer context with downloaded bytes if it exists
 					if exists && bytesDelta > 0 {
 						transferCtx.DownloadedSize += bytesDelta
+						transferCtx.LastProgressTime = time.Now()
 
 						log.Debug("download").
 							Str("file_name", state.Name).
@@ -93,6 +94,11 @@ func (m *Manager) monitorGrabDownloadProgress(ctx context.Context, state *Downlo
 							Int64("transfer_downloaded", transferCtx.DownloadedSize).
 							Int64("transfer_total", transferCtx.TotalSize).
 							Msg("Updated transfer downloaded bytes")
+
+						// Record activity with watchdog
+						if m.watchdog != nil {
+							m.watchdog.RecordActivity()
+						}
 					}
 
 					log.Info("download").

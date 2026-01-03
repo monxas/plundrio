@@ -62,31 +62,33 @@ func (s TransferLifecycleState) String() string {
 
 // TransferContext tracks the complete state of a transfer
 type TransferContext struct {
-	ID             int64
-	Name           string
-	FileID         int64
-	TotalFiles     int32
-	CompletedFiles int32
-	FailedFiles    int32 // Track number of failed files
-	TotalSize      int64 // Total size of all files in bytes
-	DownloadedSize int64 // Total downloaded bytes
-	State          TransferLifecycleState
-	Error          error
-	StartTime      time.Time // When the transfer started downloading
-	mu             sync.RWMutex
+	ID               int64
+	Name             string
+	FileID           int64
+	TotalFiles       int32
+	CompletedFiles   int32
+	FailedFiles      int32 // Track number of failed files
+	TotalSize        int64 // Total size of all files in bytes
+	DownloadedSize   int64 // Total downloaded bytes
+	State            TransferLifecycleState
+	Error            error
+	StartTime        time.Time // When the transfer started downloading
+	LastProgressTime time.Time // Last time any progress was made (for watchdog)
+	mu               sync.RWMutex
 }
 
 // TransferSnapshot is a read-only snapshot of transfer state for health monitoring
 type TransferSnapshot struct {
-	ID             int64
-	Name           string
-	State          TransferLifecycleState
-	TotalFiles     int32
-	CompletedFiles int32
-	FailedFiles    int32
-	TotalSize      int64
-	DownloadedSize int64
-	StartTime      time.Time
+	ID               int64
+	Name             string
+	State            TransferLifecycleState
+	TotalFiles       int32
+	CompletedFiles   int32
+	FailedFiles      int32
+	TotalSize        int64
+	DownloadedSize   int64
+	StartTime        time.Time
+	LastProgressTime time.Time
 }
 
 // GetSnapshot returns a thread-safe snapshot of the transfer state
@@ -94,14 +96,36 @@ func (tc *TransferContext) GetSnapshot() TransferSnapshot {
 	tc.mu.RLock()
 	defer tc.mu.RUnlock()
 	return TransferSnapshot{
-		ID:             tc.ID,
-		Name:           tc.Name,
-		State:          tc.State,
-		TotalFiles:     tc.TotalFiles,
-		CompletedFiles: tc.CompletedFiles,
-		FailedFiles:    tc.FailedFiles,
-		TotalSize:      tc.TotalSize,
-		DownloadedSize: tc.DownloadedSize,
-		StartTime:      tc.StartTime,
+		ID:               tc.ID,
+		Name:             tc.Name,
+		State:            tc.State,
+		TotalFiles:       tc.TotalFiles,
+		CompletedFiles:   tc.CompletedFiles,
+		FailedFiles:      tc.FailedFiles,
+		TotalSize:        tc.TotalSize,
+		DownloadedSize:   tc.DownloadedSize,
+		StartTime:        tc.StartTime,
+		LastProgressTime: tc.LastProgressTime,
 	}
+}
+
+// PutioTransferInfo holds information about a Put.io transfer for health monitoring
+type PutioTransferInfo struct {
+	ID           int64
+	Name         string
+	Status       string
+	PercentDone  int
+	Availability int
+	CreatedAt    time.Time
+	IsStuck      bool   // True if transfer appears stuck
+	StuckReason  string // Reason why it's considered stuck
+}
+
+// WorkerPoolStatus tracks the health of download workers
+type WorkerPoolStatus struct {
+	TotalWorkers    int
+	ActiveDownloads int
+	QueuedJobs      int
+	StallDetected   bool
+	LastActivity    time.Time
 }

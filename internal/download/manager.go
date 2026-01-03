@@ -31,6 +31,7 @@ type Manager struct {
 	running bool       // tracks if manager is running
 
 	processor *TransferProcessor // Handles transfer processing
+	watchdog  *Watchdog          // Monitors system health
 }
 
 // GetTransferProcessor returns the manager's transfer processor
@@ -41,6 +42,11 @@ func (m *Manager) GetTransferProcessor() *TransferProcessor {
 // GetCoordinator returns the manager's transfer coordinator
 func (m *Manager) GetCoordinator() *TransferCoordinator {
 	return m.coordinator
+}
+
+// GetWatchdog returns the manager's watchdog
+func (m *Manager) GetWatchdog() *Watchdog {
+	return m.watchdog
 }
 
 // New creates a new download manager
@@ -63,9 +69,10 @@ func New(cfg *config.Config, client *api.Client) *Manager {
 		activeFiles: sync.Map{},
 	}
 
-	// Initialize coordinator and processor
+	// Initialize coordinator, processor, and watchdog
 	m.coordinator = NewTransferCoordinator(m)
 	m.processor = newTransferProcessor(m)
+	m.watchdog = NewWatchdog(m)
 
 	// Register cleanup hooks
 	m.coordinator.RegisterCleanupHook(func(transferID int64) error {
@@ -126,6 +133,9 @@ func (m *Manager) Start() {
 		defer m.monitorWg.Done()
 		m.monitorTransfers()
 	}()
+
+	// Start watchdog
+	m.watchdog.Start()
 }
 
 // Stop gracefully shuts down the manager

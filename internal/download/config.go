@@ -27,18 +27,31 @@ type DownloadConfig struct {
 
 	// CopyTimeout is the timeout for waiting for the copy operation to complete after cancellation
 	CopyTimeout time.Duration
+
+	// PutioStuckTransferTimeout is how long a transfer can be stuck on Put.io before alerting/cleanup
+	// A transfer is "stuck" if it's in DOWNLOADING state with low availability for this duration
+	PutioStuckTransferTimeout time.Duration
+
+	// WorkerStallCheckInterval is how often to check if workers are stalled
+	WorkerStallCheckInterval time.Duration
+
+	// TransferContextTimeout is how long a transfer context can be in Downloading state without progress
+	TransferContextTimeout time.Duration
 }
 
 // GetDefaultConfig returns a DownloadConfig with reasonable default values
 func GetDefaultConfig() *DownloadConfig {
 	return &DownloadConfig{
-		DefaultWorkerCount:     3,                // 3 concurrent downloads by default
-		BufferMultiple:         5,                // Buffer size = 5 * worker count
-		ProgressUpdateInterval: 5 * time.Second,  // Log progress every 5 seconds
-		TransferCheckInterval:  30 * time.Second, // Check for new transfers every 30 seconds
-		IdleConnectionTimeout:  90 * time.Second, // Keep idle connections for 90 seconds
-		DownloadHeaderTimeout:  30 * time.Second, // 30 second timeout for response headers
-		DownloadStallTimeout:   2 * time.Minute,  // Cancel download if stalled for 2 minutes
-		CopyTimeout:            10 * time.Second, // Wait 10 seconds for copy to complete after cancellation
+		DefaultWorkerCount:        3,                 // 3 concurrent downloads by default
+		BufferMultiple:            5,                 // Buffer size = 5 * worker count
+		ProgressUpdateInterval:    5 * time.Second,  // Log progress every 5 seconds
+		TransferCheckInterval:     30 * time.Second, // Check for new transfers every 30 seconds
+		IdleConnectionTimeout:     90 * time.Second, // Keep idle connections for 90 seconds
+		DownloadHeaderTimeout:     30 * time.Second, // 30 second timeout for response headers
+		DownloadStallTimeout:      2 * time.Minute,  // Cancel download if stalled for 2 minutes
+		CopyTimeout:               10 * time.Second, // Wait 10 seconds for copy to complete after cancellation
+		PutioStuckTransferTimeout: 6 * time.Hour,    // Alert if Put.io transfer stuck for 6 hours
+		WorkerStallCheckInterval:  1 * time.Minute,  // Check worker health every minute
+		TransferContextTimeout:    30 * time.Minute, // Clean up transfer contexts stalled for 30 minutes
 	}
 }
