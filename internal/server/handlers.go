@@ -3,7 +3,9 @@ package server
 import (
 	"encoding/json"
 	"net/http"
+	"time"
 
+	"github.com/elsbrock/plundrio/internal/download"
 	"github.com/elsbrock/plundrio/internal/log"
 )
 
@@ -115,4 +117,91 @@ func (s *Server) handleRPC(w http.ResponseWriter, r *http.Request) {
 		Msg("Sending RPC response")
 
 	s.sendResponse(w, req.Tag, result)
+}
+
+// HealthResponse contains the health check response data
+type HealthResponse struct {
+	Status           string                 `json:"status"`
+	Uptime           string                 `json:"uptime"`
+	ActiveTransfers  int                    `json:"active_transfers"`
+	IncompleteCount  int                    `json:"incomplete_count"`
+	TotalDownloadRate int64                 `json:"total_download_rate_bytes"`
+	Transfers        []TransferHealthStatus `json:"transfers,omitempty"`
+}
+
+// TransferHealthStatus contains status for a single transfer
+type TransferHealthStatus struct {
+	ID             int64   `json:"id"`
+	Name           string  `json:"name"`
+	State          string  `json:"state"`
+	Progress       float64 `json:"progress_percent"`
+	DownloadRate   int64   `json:"download_rate_bytes"`
+	CompletedFiles int32   `json:"completed_files"`
+	TotalFiles     int32   `json:"total_files"`
+}
+
+var serverStartTime = time.Now()
+
+// handleHealth returns health status including download progress
+func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
+	coordinator := s.dlManager.GetCoordinator()
+
+	response := HealthResponse{
+		Status:          "healthy",
+		Uptime:          time.Since(serverStartTime).Round(time.Second).String(),
+		ActiveTransfers: 0,
+		IncompleteCount: 0,
+		TotalDownloadRate: 0,
+		Transfers:       []TransferHealthStatus{},
+	}
+
+	// Get all active transfers
+	transfers := coordinator.GetAllTransfers()
+	for _, ctx := range transfers {
+		// Get a thread-safe snapshot of the transfer state
+		snapshot := ctx.GetSnapshot()
+
+		// Calculate progress
+		var progress float64
+		if snapshot.TotalSize > 0 {
+			progress = float64(snapshot.DownloadedSize) / float64(snapshot.TotalSize) * 100
+		}
+
+		// Calculate download rate (simplified - from coordinator)
+		var downloadRate int64 = 0
+		if snapshot.State == download.TransferLifecycleDownloading {
+			// Estimate rate based on time since start
+			elapsed := time.Since(snapshot.StartTime).Seconds()
+			if elapsed > 0 {
+				downloadRate = int64(float64(snapshot.DownloadedSize) / elapsed)
+			}
+		}
+
+		status := TransferHealthStatus{
+			ID:             snapshot.ID,
+			Name:           snapshot.Name,
+			State:          snapshot.State.String(),
+			Progress:       progress,
+			DownloadRate:   downloadRate,
+			CompletedFiles: snapshot.CompletedFiles,
+			TotalFiles:     snapshot.TotalFiles,
+		}
+
+		response.Transfers = append(response.Transfers, status)
+		response.ActiveTransfers++
+
+		if progress < 100 {
+			response.IncompleteCount++
+			response.TotalDownloadRate += downloadRate
+		}
+	}
+
+	// Determine overall health
+	// Unhealthy if we have incomplete transfers with 0 download rate
+	if response.IncompleteCount > 0 && response.TotalDownloadRate == 0 {
+		response.Status = "stalled"
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(response)
 }

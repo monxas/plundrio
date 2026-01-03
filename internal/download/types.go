@@ -72,5 +72,36 @@ type TransferContext struct {
 	DownloadedSize int64 // Total downloaded bytes
 	State          TransferLifecycleState
 	Error          error
+	StartTime      time.Time // When the transfer started downloading
 	mu             sync.RWMutex
+}
+
+// TransferSnapshot is a read-only snapshot of transfer state for health monitoring
+type TransferSnapshot struct {
+	ID             int64
+	Name           string
+	State          TransferLifecycleState
+	TotalFiles     int32
+	CompletedFiles int32
+	FailedFiles    int32
+	TotalSize      int64
+	DownloadedSize int64
+	StartTime      time.Time
+}
+
+// GetSnapshot returns a thread-safe snapshot of the transfer state
+func (tc *TransferContext) GetSnapshot() TransferSnapshot {
+	tc.mu.RLock()
+	defer tc.mu.RUnlock()
+	return TransferSnapshot{
+		ID:             tc.ID,
+		Name:           tc.Name,
+		State:          tc.State,
+		TotalFiles:     tc.TotalFiles,
+		CompletedFiles: tc.CompletedFiles,
+		FailedFiles:    tc.FailedFiles,
+		TotalSize:      tc.TotalSize,
+		DownloadedSize: tc.DownloadedSize,
+		StartTime:      tc.StartTime,
+	}
 }

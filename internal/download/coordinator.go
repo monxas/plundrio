@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/elsbrock/plundrio/internal/log"
 )
@@ -63,6 +64,7 @@ func (tc *TransferCoordinator) StartDownload(transferID int64) error {
 	}
 
 	ctx.State = TransferLifecycleDownloading
+	ctx.StartTime = time.Now()
 	log.Info("transfer").
 		Int64("id", transferID).
 		Str("name", ctx.Name).
@@ -323,4 +325,16 @@ func (tc *TransferCoordinator) GetTransferContext(transferID int64) (*TransferCo
 		Msg("Currently tracked transfers")
 
 	return nil, false
+}
+
+// GetAllTransfers returns all active transfer contexts for health monitoring
+func (tc *TransferCoordinator) GetAllTransfers() []*TransferContext {
+	var transfers []*TransferContext
+	tc.transfers.Range(func(key, value interface{}) bool {
+		if ctx, ok := value.(*TransferContext); ok {
+			transfers = append(transfers, ctx)
+		}
+		return true
+	})
+	return transfers
 }

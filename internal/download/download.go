@@ -98,9 +98,16 @@ func isTransientError(err error) bool {
 		return false
 	}
 
-	// Check for cancellation errors - these should be passed through
-	if downloadErr, ok := err.(*DownloadError); ok && downloadErr.Type == "DownloadCancelled" {
-		return false
+	// Check for download errors
+	if downloadErr, ok := err.(*DownloadError); ok {
+		switch downloadErr.Type {
+		case "DownloadCancelled":
+			// Cancellations should be passed through, not retried
+			return false
+		case "DownloadStalled":
+			// Stalled downloads should be retried
+			return true
+		}
 	}
 
 	// Check for grab errors
@@ -115,6 +122,11 @@ func isTransientError(err error) bool {
 		strings.Contains(err.Error(), "503") || // Service Unavailable
 		strings.Contains(err.Error(), "504") || // Gateway Timeout
 		strings.Contains(err.Error(), "502") { // Bad Gateway
+		return true
+	}
+
+	// Check for context cancelled (stall detection triggers this)
+	if strings.Contains(err.Error(), "context canceled") {
 		return true
 	}
 
@@ -203,8 +215,8 @@ func (m *Manager) downloadFile(state *DownloadState) error {
 	// Configure the request
 	m.configureGrabRequest(req)
 
-	// Monitor download progress
-	go m.monitorGrabDownloadProgress(ctx, state, resp, done, progressTicker)
+	// Monitor download progress (pass cancel func for stall detection)
+	go m.monitorGrabDownloadProgress(ctx, state, resp, done, progressTicker, cancel)
 
 	// Wait for completion or cancellation
 	select {

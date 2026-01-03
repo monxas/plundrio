@@ -39,6 +39,7 @@ func (s *Server) Start() error {
 	// Initialize server first
 	mux := http.NewServeMux()
 	mux.HandleFunc("/transmission/rpc", s.handleRPC)
+	mux.HandleFunc("/health", s.handleHealth)
 
 	s.srv = &http.Server{
 		Addr:    s.cfg.ListenAddr,

@@ -38,3 +38,12 @@ func NewNoFilesFoundError(transferID int64) error {
 		Message: fmt.Sprintf("No files found for transfer %d", transferID),
 	}
 }
+
+// NewDownloadStalledError creates a new error for stalled downloads
+// This is a transient error that should trigger a retry
+func NewDownloadStalledError(filename string, stallDuration string) error {
+	return &DownloadError{
+		Type:    "DownloadStalled",
+		Message: fmt.Sprintf("Download of %s stalled for %s", filename, stallDuration),
+	}
+}

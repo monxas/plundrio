@@ -9,7 +9,9 @@ import (
 )
 
 // monitorGrabDownloadProgress starts a goroutine to monitor and log download progress from grab
-func (m *Manager) monitorGrabDownloadProgress(ctx context.Context, state *DownloadState, resp *grab.Response, done chan struct{}, progressTicker *time.Ticker) {
+// It also detects stalled downloads and cancels them after DownloadStallTimeout
+// The cancelFunc is called when a stall is detected to abort the download
+func (m *Manager) monitorGrabDownloadProgress(ctx context.Context, state *DownloadState, resp *grab.Response, done chan struct{}, progressTicker *time.Ticker, cancelFunc context.CancelFunc) {
 	fileSize := resp.Size()
 
 	go func() {
@@ -27,6 +29,10 @@ func (m *Manager) monitorGrabDownloadProgress(ctx context.Context, state *Downlo
 				Msg("Transfer context not found during download")
 		}
 
+		// Track last progress for stall detection
+		var lastBytesComplete int64
+		lastProgressTime := time.Now()
+
 		for {
 			select {
 			case <-progressTicker.C:
@@ -37,6 +43,25 @@ func (m *Manager) monitorGrabDownloadProgress(ctx context.Context, state *Downlo
 					bytesDelta := bytesComplete - state.downloaded
 					state.downloaded = bytesComplete
 					state.Progress = resp.Progress()
+
+					// Stall detection: check if we've made progress since last check
+					if bytesComplete > lastBytesComplete {
+						lastBytesComplete = bytesComplete
+						lastProgressTime = time.Now()
+					} else if time.Since(lastProgressTime) > m.dlConfig.DownloadStallTimeout {
+						// Download has stalled for too long - cancel the context to abort
+						stallDuration := time.Since(lastProgressTime)
+						progress := state.Progress * 100
+						state.mu.Unlock()
+						log.Warn("download").
+							Str("file_name", state.Name).
+							Dur("stall_duration", stallDuration).
+							Float64("progress_percent", progress).
+							Msg("Download stalled, cancelling to trigger retry")
+						// Cancel the download context to abort the stalled download
+						cancelFunc()
+						return
+					}
 
 					// Calculate ETA based on current download rate
 					elapsed := time.Since(state.StartTime).Seconds()
