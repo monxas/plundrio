@@ -67,12 +67,63 @@ var runCmd = &cobra.Command{
 		listenAddr := viper.GetString("listen")
 		workerCount := viper.GetInt("workers")
 
+		// Sonarr/Radarr integration
+		sonarrURL := viper.GetString("sonarr-url")
+		sonarrAPIKey := viper.GetString("sonarr-api-key")
+		radarrURL := viper.GetString("radarr-url")
+		radarrAPIKey := viper.GetString("radarr-api-key")
+		remotePath := viper.GetString("remote-path")
+		localPath := viper.GetString("local-path")
+
+		// Notification settings
+		ntfyURL := viper.GetString("ntfy-url")
+		ntfyTopic := viper.GetString("ntfy-topic")
+
+		// Auto-cancel settings
+		autoCancelStuck := viper.GetBool("auto-cancel-stuck")
+		autoCancelTimeout := viper.GetDuration("auto-cancel-timeout")
+		autoCancelResearch := viper.GetBool("auto-cancel-research")
+		autoCancelMinRetry := viper.GetDuration("auto-cancel-min-retry")
+
+		// Retry settings
+		maxRetries := viper.GetInt("max-retries")
+		retryBaseDelay := viper.GetDuration("retry-base-delay")
+		retryMaxDelay := viper.GetDuration("retry-max-delay")
+
+		// Priority settings
+		priorityEnabled := viper.GetBool("priority-enabled")
+		smallFilePriority := viper.GetBool("small-file-priority")
+		sequentialDownload := viper.GetBool("sequential-download")
+
 		log.Debug("config").
 			Str("target_dir", targetDir).
 			Str("putio_folder", putioFolder).
 			Str("listen_addr", listenAddr).
 			Int("workers", workerCount).
 			Msg("Configuration loaded")
+
+		// Log *arr integration status
+		if sonarrURL != "" || radarrURL != "" {
+			log.Info("config").
+				Bool("sonarr_configured", sonarrURL != "").
+				Bool("radarr_configured", radarrURL != "").
+				Msg("*arr integration enabled")
+		}
+
+		// Log notification status
+		if ntfyURL != "" && ntfyTopic != "" {
+			log.Info("config").
+				Str("ntfy_topic", ntfyTopic).
+				Msg("ntfy notifications enabled")
+		}
+
+		// Log auto-cancel status
+		if autoCancelStuck {
+			log.Info("config").
+				Dur("timeout", autoCancelTimeout).
+				Bool("research_enabled", autoCancelResearch).
+				Msg("Auto-cancel stuck transfers enabled")
+		}
 
 		// Validate required configuration values
 		// Security warning for token in config file
@@ -107,6 +158,34 @@ var runCmd = &cobra.Command{
 			OAuthToken:  oauthToken,
 			ListenAddr:  listenAddr,
 			WorkerCount: workerCount,
+
+			// Sonarr/Radarr integration
+			SonarrURL:    sonarrURL,
+			SonarrAPIKey: sonarrAPIKey,
+			RadarrURL:    radarrURL,
+			RadarrAPIKey: radarrAPIKey,
+			RemotePath:   remotePath,
+			LocalPath:    localPath,
+
+			// Notifications
+			NtfyURL:   ntfyURL,
+			NtfyTopic: ntfyTopic,
+
+			// Auto-cancel stuck transfers
+			AutoCancelStuck:    autoCancelStuck,
+			AutoCancelTimeout:  autoCancelTimeout,
+			AutoCancelResearch: autoCancelResearch,
+			AutoCancelMinRetry: autoCancelMinRetry,
+
+			// Retry configuration
+			MaxRetries:     maxRetries,
+			RetryBaseDelay: retryBaseDelay,
+			RetryMaxDelay:  retryMaxDelay,
+
+			// Priority configuration
+			PriorityEnabled:    priorityEnabled,
+			SmallFilePriority:  smallFilePriority,
+			SequentialDownload: sequentialDownload,
 		}
 
 		// Initialize Put.io API client
@@ -183,8 +262,42 @@ listen: ":9091"							# Transmission RPC server address
 workers: 4									# Number of download workers
 log_level: "info"					  # Log level (trace,debug,info,warn,error,fatal,panic,none,pretty)
 
+# Sonarr/Radarr Integration (optional)
+# sonarr_url: "http://sonarr:8989"
+# sonarr_api_key: ""
+# radarr_url: "http://radarr:7878"
+# radarr_api_key: ""
+# remote_path: "/downloads"         # Path as seen by *arr
+# local_path: "/mnt/downloads"      # Path as seen by Plundrio
+
+# Notifications (optional)
+# ntfy_url: "https://ntfy.sh"
+# ntfy_topic: "plundrio"
+
+# Auto-Cancel Stuck Transfers (optional)
+# auto_cancel_stuck: false          # Enable auto-cancellation of stuck transfers
+# auto_cancel_timeout: "12h"        # How long before cancelling a stuck transfer
+# auto_cancel_research: false       # Trigger re-search in *arr after cancelling
+# auto_cancel_min_retry: "1h"       # Minimum time before re-searching same media
+
+# Retry Configuration (optional)
+# max_retries: 3                    # Maximum retry attempts for failed downloads
+# retry_base_delay: "30s"           # Base delay between retries
+# retry_max_delay: "30m"            # Maximum delay between retries
+
+# Priority Configuration (optional)
+# priority_enabled: false           # Enable download priority system
+# small_file_priority: false        # Prioritize smaller files
+# sequential_download: false        # Download episodes in sequence order
+
 # Environment variables:
 # PLDR_TARGET, PLDR_FOLDER, PLDR_TOKEN, PLDR_LISTEN, PLDR_WORKERS, PLDR_LOG_LEVEL
+# PLDR_SONARR_URL, PLDR_SONARR_API_KEY, PLDR_RADARR_URL, PLDR_RADARR_API_KEY
+# PLDR_REMOTE_PATH, PLDR_LOCAL_PATH, PLDR_NTFY_URL, PLDR_NTFY_TOPIC
+# PLDR_AUTO_CANCEL_STUCK, PLDR_AUTO_CANCEL_TIMEOUT, PLDR_AUTO_CANCEL_RESEARCH
+# PLDR_AUTO_CANCEL_MIN_RETRY, PLDR_MAX_RETRIES, PLDR_RETRY_BASE_DELAY
+# PLDR_RETRY_MAX_DELAY, PLDR_PRIORITY_ENABLED, PLDR_SMALL_FILE_PRIORITY
+# PLDR_SEQUENTIAL_DOWNLOAD
 `
 
 		outputPath := "plundrio-config.yaml"
@@ -286,6 +399,34 @@ func init() {
 	runCmd.Flags().StringP("listen", "l", ":9091", "Listen address")
 	runCmd.Flags().IntP("workers", "w", 4, "Number of workers")
 	runCmd.Flags().String("log-level", "", "Log level (trace,debug,info,warn,error,fatal,none,pretty)")
+
+	// Sonarr/Radarr integration flags
+	runCmd.Flags().String("sonarr-url", "", "Sonarr URL (e.g., http://sonarr:8989)")
+	runCmd.Flags().String("sonarr-api-key", "", "Sonarr API key")
+	runCmd.Flags().String("radarr-url", "", "Radarr URL (e.g., http://radarr:7878)")
+	runCmd.Flags().String("radarr-api-key", "", "Radarr API key")
+	runCmd.Flags().String("remote-path", "", "Download path as seen by *arr apps")
+	runCmd.Flags().String("local-path", "", "Download path as seen by Plundrio")
+
+	// Notification flags
+	runCmd.Flags().String("ntfy-url", "https://ntfy.sh", "ntfy server URL")
+	runCmd.Flags().String("ntfy-topic", "", "ntfy topic for notifications")
+
+	// Auto-cancel flags
+	runCmd.Flags().Bool("auto-cancel-stuck", false, "Auto-cancel stuck Put.io transfers")
+	runCmd.Flags().Duration("auto-cancel-timeout", 12*time.Hour, "Time before considering a transfer stuck")
+	runCmd.Flags().Bool("auto-cancel-research", false, "Trigger *arr re-search after cancelling")
+	runCmd.Flags().Duration("auto-cancel-min-retry", 1*time.Hour, "Minimum time before re-searching same media")
+
+	// Retry flags
+	runCmd.Flags().Int("max-retries", 3, "Maximum retry attempts for failed downloads")
+	runCmd.Flags().Duration("retry-base-delay", 30*time.Second, "Base delay between retries")
+	runCmd.Flags().Duration("retry-max-delay", 30*time.Minute, "Maximum delay between retries")
+
+	// Priority flags
+	runCmd.Flags().Bool("priority-enabled", false, "Enable download priority system")
+	runCmd.Flags().Bool("small-file-priority", false, "Prioritize smaller files first")
+	runCmd.Flags().Bool("sequential-download", false, "Download episodes in sequence order")
 
 	rootCmd.AddCommand(runCmd)
 	rootCmd.AddCommand(getTokenCmd)

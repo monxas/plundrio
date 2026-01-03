@@ -6,6 +6,7 @@ import (
 	"github.com/elsbrock/plundrio/internal/api"
 	"github.com/elsbrock/plundrio/internal/config"
 	"github.com/elsbrock/plundrio/internal/log"
+	"github.com/elsbrock/plundrio/internal/metrics"
 )
 
 // Manager handles downloading completed transfers from Put.io.
@@ -30,8 +31,10 @@ type Manager struct {
 	mu      sync.Mutex // protects job queueing
 	running bool       // tracks if manager is running
 
-	processor *TransferProcessor // Handles transfer processing
-	watchdog  *Watchdog          // Monitors system health
+	processor  *TransferProcessor // Handles transfer processing
+	watchdog   *Watchdog          // Monitors system health
+	retryQueue *RetryQueue        // Manages failed download retries
+	metrics    *metrics.Metrics   // Prometheus metrics
 }
 
 // GetTransferProcessor returns the manager's transfer processor
@@ -47,6 +50,16 @@ func (m *Manager) GetCoordinator() *TransferCoordinator {
 // GetWatchdog returns the manager's watchdog
 func (m *Manager) GetWatchdog() *Watchdog {
 	return m.watchdog
+}
+
+// GetMetrics returns the manager's metrics
+func (m *Manager) GetMetrics() *metrics.Metrics {
+	return m.metrics
+}
+
+// GetRetryQueue returns the manager's retry queue
+func (m *Manager) GetRetryQueue() *RetryQueue {
+	return m.retryQueue
 }
 
 // New creates a new download manager
@@ -69,10 +82,12 @@ func New(cfg *config.Config, client *api.Client) *Manager {
 		activeFiles: sync.Map{},
 	}
 
-	// Initialize coordinator, processor, and watchdog
+	// Initialize coordinator, processor, watchdog, retry queue, and metrics
 	m.coordinator = NewTransferCoordinator(m)
 	m.processor = newTransferProcessor(m)
 	m.watchdog = NewWatchdog(m)
+	m.retryQueue = NewRetryQueue(m)
+	m.metrics = metrics.NewMetrics()
 
 	// Register cleanup hooks
 	m.coordinator.RegisterCleanupHook(func(transferID int64) error {
@@ -136,6 +151,9 @@ func (m *Manager) Start() {
 
 	// Start watchdog
 	m.watchdog.Start()
+
+	// Start retry queue
+	m.retryQueue.Start()
 }
 
 // Stop gracefully shuts down the manager
@@ -160,6 +178,9 @@ func (m *Manager) Stop() {
 			}
 		}()
 	})
+
+	// Stop retry queue
+	m.retryQueue.Stop()
 
 	// Wait for all workers to finish
 	m.workerWg.Wait()

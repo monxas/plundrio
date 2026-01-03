@@ -41,6 +41,11 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/transmission/rpc", s.handleRPC)
 	mux.HandleFunc("/health", s.handleHealth)
 
+	// Add Prometheus metrics endpoint
+	if metrics := s.dlManager.GetMetrics(); metrics != nil {
+		mux.Handle("/metrics", metrics.Handler())
+	}
+
 	s.srv = &http.Server{
 		Addr:    s.cfg.ListenAddr,
 		Handler: mux,

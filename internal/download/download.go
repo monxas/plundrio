@@ -24,6 +24,12 @@ func (m *Manager) downloadWorker() {
 			if !ok {
 				return
 			}
+
+			// Update active downloads metric
+			if m.metrics != nil {
+				m.metrics.SetActiveDownloads(int(m.watchdog.activeDownloads.Load()) + 1)
+			}
+
 			state := &DownloadState{
 				FileID:     job.FileID,
 				Name:       job.Name,
@@ -41,11 +47,34 @@ func (m *Manager) downloadWorker() {
 					// Don't call FailTransfer for cancellations
 					continue
 				}
+
+				// Track failed download in metrics
+				if m.metrics != nil {
+					m.metrics.IncrDownloadsFailed()
+				}
+
+				// Check if we should add to retry queue
+				if m.retryQueue != nil && isRetryableError(err) {
+					if m.retryQueue.Add(job, err) {
+						log.Info("download").
+							Str("file_name", job.Name).
+							Msg("Added to retry queue")
+						// Remove from active files so it can be re-queued later
+						m.activeFiles.Delete(job.FileID)
+						continue
+					}
+				}
+
 				// Handle permanent failures
 				log.Error("download").
 					Str("file_name", job.Name).
 					Err(err).
 					Msg("Failed to download file")
+
+				// Send notification about failure
+				if m.watchdog != nil && m.watchdog.GetNotifier() != nil {
+					m.watchdog.GetNotifier().TransferFailed(job.Name, err.Error())
+				}
 
 				// Just remove the file from active files but don't fail the entire transfer
 				// We'll keep the transfer context so we can retry later
@@ -55,12 +84,38 @@ func (m *Manager) downloadWorker() {
 				m.handleFileFailure(job.TransferID)
 				continue
 			}
+
+			// Track successful download in metrics
+			if m.metrics != nil {
+				m.metrics.IncrDownloadsCompleted()
+			}
+
 			// Pass both transferID and fileID to handleFileCompletion
 			// The file cleanup is now handled inside handleFileCompletion
 			m.handleFileCompletion(job.TransferID, job.FileID)
 			// Do NOT call m.activeFiles.Delete here - now handled in handleFileCompletion
 		}
 	}
+}
+
+// isRetryableError checks if an error should trigger a retry
+func isRetryableError(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	// Check for download errors
+	if downloadErr, ok := err.(*DownloadError); ok {
+		switch downloadErr.Type {
+		case "DownloadCancelled":
+			return false // Don't retry cancellations
+		case "DownloadStalled":
+			return true // Retry stalled downloads
+		}
+	}
+
+	// Retry on transient network errors
+	return isTransientError(err)
 }
 
 // downloadWithRetry attempts to download a file with retries on transient errors
@@ -239,6 +294,11 @@ func (m *Manager) downloadFile(state *DownloadState) error {
 		elapsed := time.Since(state.StartTime).Seconds()
 		totalSize := resp.Size()
 		averageSpeedMBps := (float64(totalSize) / 1024 / 1024) / elapsed
+
+		// Track bytes downloaded in metrics
+		if m.metrics != nil {
+			m.metrics.AddBytesDownloaded(totalSize)
+		}
 
 		// Update transfer context with the completed file size
 		if transferCtx, exists := m.coordinator.GetTransferContext(state.TransferID); exists {

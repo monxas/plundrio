@@ -389,10 +389,11 @@ func (p *TransferProcessor) queueTransferFiles(transfer *putio.Transfer, files [
 		Int("file_count", len(files)).
 		Msg("Updated transfer with total file size")
 
+	// Collect files that need downloading
+	var filesToQueue []*putio.File
 	for _, file := range files {
 		if p.shouldDownloadFile(transfer, file) {
-			filesToDownload++
-			p.queueFileDownload(transfer, file)
+			filesToQueue = append(filesToQueue, file)
 		} else {
 			// For files we don't need to download (already exist), mark as completed
 			// This ensures our file count tracking is accurate
@@ -416,6 +417,31 @@ func (p *TransferProcessor) queueTransferFiles(transfer *putio.Transfer, files [
 				Msg("Added existing file size to downloaded total")
 		}
 	}
+
+	// Sort files using smart ordering if enabled
+	if p.manager.cfg.PriorityEnabled || p.manager.cfg.SequentialDownload {
+		sortedFiles := SortPutioFiles(filesToQueue, p.manager.cfg.SmallFilePriority, p.manager.cfg.SequentialDownload)
+
+		log.Info("transfers").
+			Int64("transfer_id", transfer.ID).
+			Int("files_to_download", len(sortedFiles)).
+			Bool("sequential", p.manager.cfg.SequentialDownload).
+			Bool("small_first", p.manager.cfg.SmallFilePriority).
+			Msg("Sorted files for optimal download order")
+
+		// Queue sorted files
+		for _, file := range sortedFiles {
+			filesToDownload++
+			p.queueFileDownload(transfer, file)
+		}
+	} else {
+		// Queue files in original order
+		for _, file := range filesToQueue {
+			filesToDownload++
+			p.queueFileDownload(transfer, file)
+		}
+	}
+
 	return filesToDownload
 }
 

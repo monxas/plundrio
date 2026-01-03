@@ -1,10 +1,13 @@
 package download
 
 import (
+	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/elsbrock/plundrio/internal/arr"
 	"github.com/elsbrock/plundrio/internal/log"
+	"github.com/elsbrock/plundrio/internal/notify"
 )
 
 // Watchdog monitors the health of the download system and detects stalls
@@ -13,6 +16,14 @@ type Watchdog struct {
 	lastActivityTime atomic.Value // time.Time
 	activeDownloads  atomic.Int32
 	stalledWorkers   atomic.Bool
+
+	// Auto-cancel tracking
+	cancelledTransfers sync.Map // map[int64]time.Time - tracks when transfers were cancelled
+	researchCooldowns  sync.Map // map[string]time.Time - tracks last research time per show/movie
+
+	// External integrations
+	arrClient *arr.Client
+	notifier  *notify.Notifier
 }
 
 // NewWatchdog creates a new watchdog for the download manager
@@ -21,6 +32,17 @@ func NewWatchdog(m *Manager) *Watchdog {
 		manager: m,
 	}
 	w.lastActivityTime.Store(time.Now())
+
+	// Initialize arr client if configured
+	if m.cfg.HasArrIntegration() {
+		w.arrClient = arr.NewClient(m.cfg)
+	}
+
+	// Initialize notifier if configured
+	if m.cfg.HasNtfy() {
+		w.notifier = notify.NewNotifier(m.cfg)
+	}
+
 	return w
 }
 
@@ -29,6 +51,11 @@ func (w *Watchdog) Start() {
 	go w.monitorWorkerPool()
 	go w.monitorTransferContexts()
 	go w.monitorPutioTransfers()
+
+	// Start auto-cancel monitor if enabled
+	if w.manager.cfg.AutoCancelStuck {
+		go w.monitorAndCancelStuckTransfers()
+	}
 }
 
 // RecordActivity updates the last activity timestamp
@@ -59,12 +86,22 @@ func (w *Watchdog) monitorWorkerPool() {
 	ticker := time.NewTicker(w.manager.dlConfig.WorkerStallCheckInterval)
 	defer ticker.Stop()
 
+	var wasStalled bool
+
 	for {
 		select {
 		case <-w.manager.stopChan:
 			return
 		case <-ticker.C:
 			w.checkWorkerHealth()
+
+			// Send notification on state change
+			isStalled := w.stalledWorkers.Load()
+			if isStalled && !wasStalled && w.notifier != nil {
+				status := w.GetWorkerPoolStatus()
+				w.notifier.WorkerPoolStalled(status.ActiveDownloads, status.QueuedJobs)
+			}
+			wasStalled = isStalled
 		}
 	}
 }
@@ -233,6 +270,144 @@ func (w *Watchdog) checkPutioTransfers() {
 	}
 }
 
+// monitorAndCancelStuckTransfers handles auto-cancellation and re-search
+func (w *Watchdog) monitorAndCancelStuckTransfers() {
+	// Check every 10 minutes
+	ticker := time.NewTicker(10 * time.Minute)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-w.manager.stopChan:
+			return
+		case <-ticker.C:
+			w.processStuckTransfers()
+		}
+	}
+}
+
+// processStuckTransfers cancels stuck transfers and triggers re-search
+func (w *Watchdog) processStuckTransfers() {
+	if w.manager.processor == nil {
+		return
+	}
+
+	stuckTransfers := w.GetStuckPutioTransfers()
+	timeout := w.manager.cfg.AutoCancelTimeout
+	now := time.Now()
+
+	for _, info := range stuckTransfers {
+		// Check if this transfer has been stuck long enough to cancel
+		if !info.CreatedAt.IsZero() && now.Sub(info.CreatedAt) < timeout {
+			continue // Not old enough to cancel
+		}
+
+		// Check if we already cancelled this recently
+		if lastCancel, ok := w.cancelledTransfers.Load(info.ID); ok {
+			if now.Sub(lastCancel.(time.Time)) < 1*time.Hour {
+				continue // Already cancelled recently
+			}
+		}
+
+		log.Warn("watchdog").
+			Int64("transfer_id", info.ID).
+			Str("name", info.Name).
+			Str("reason", info.StuckReason).
+			Msg("Auto-cancelling stuck transfer")
+
+		// Send notification about stuck transfer
+		if w.notifier != nil {
+			w.notifier.TransferStuck(info.Name, info.StuckReason, true)
+		}
+
+		// Cancel the transfer on Put.io
+		if err := w.manager.client.DeleteTransfer(info.ID); err != nil {
+			log.Error("watchdog").
+				Int64("transfer_id", info.ID).
+				Err(err).
+				Msg("Failed to cancel stuck transfer")
+			continue
+		}
+
+		// Track that we cancelled this
+		w.cancelledTransfers.Store(info.ID, now)
+
+		// Update metrics
+		if w.manager.metrics != nil {
+			w.manager.metrics.IncrDownloadsCancelled()
+		}
+
+		// Trigger re-search if enabled and arr client is configured
+		researchTriggered := false
+		if w.manager.cfg.AutoCancelResearch && w.arrClient != nil {
+			researchTriggered = w.triggerResearch(info.Name)
+		}
+
+		// Send notification about cancellation
+		if w.notifier != nil {
+			w.notifier.TransferCancelled(info.Name, researchTriggered)
+		}
+
+		log.Info("watchdog").
+			Int64("transfer_id", info.ID).
+			Str("name", info.Name).
+			Bool("research_triggered", researchTriggered).
+			Msg("Stuck transfer cancelled")
+	}
+}
+
+// triggerResearch triggers a re-search in Sonarr/Radarr
+func (w *Watchdog) triggerResearch(name string) bool {
+	// Check cooldown
+	minRetry := w.manager.cfg.AutoCancelMinRetry
+	if minRetry <= 0 {
+		minRetry = 1 * time.Hour
+	}
+
+	// Use a normalized name as the key for cooldown tracking
+	mediaType := arr.DetectMediaType(name)
+	cooldownKey := name // Could be normalized further
+
+	if lastResearch, ok := w.researchCooldowns.Load(cooldownKey); ok {
+		if time.Since(lastResearch.(time.Time)) < minRetry {
+			log.Debug("watchdog").
+				Str("name", name).
+				Msg("Research on cooldown, skipping")
+			return false
+		}
+	}
+
+	// Trigger the research
+	_, err := w.arrClient.Research(name)
+	if err != nil {
+		log.Warn("watchdog").
+			Str("name", name).
+			Err(err).
+			Msg("Failed to trigger research")
+		return false
+	}
+
+	// Update cooldown
+	w.researchCooldowns.Store(cooldownKey, time.Now())
+
+	// Update metrics
+	if w.manager.metrics != nil {
+		w.manager.metrics.IncrResearchesTriggered()
+	}
+
+	// Notify
+	if w.notifier != nil {
+		w.notifier.ResearchTriggered(name, string(mediaType))
+	}
+
+	log.Info("watchdog").
+		Str("name", name).
+		Str("media_type", string(mediaType)).
+		Msg("Triggered re-search in *arr")
+
+	return true
+}
+
 // isTransferStuck determines if a Put.io transfer is stuck
 // Note: This is a placeholder that always returns false - actual stuck detection
 // is done in GetStuckPutioTransfers which has direct access to transfer data
@@ -300,4 +475,14 @@ func (w *Watchdog) GetStuckPutioTransfers() []PutioTransferInfo {
 	}
 
 	return stuckTransfers
+}
+
+// GetArrClient returns the arr client for external use
+func (w *Watchdog) GetArrClient() *arr.Client {
+	return w.arrClient
+}
+
+// GetNotifier returns the notifier for external use
+func (w *Watchdog) GetNotifier() *notify.Notifier {
+	return w.notifier
 }
