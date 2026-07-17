@@ -1,0 +1,43 @@
+# Git
+.git
+.gitignore
+
+# Documentation
+README.md
+LICENSE
+
+# CI/CD
+.github
+
+# Nix
+flake.nix
+flake.lock
+result
+result-*
+
+# IDE
+.vscode
+.idea
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Build artifacts
+*.exe
+*.dll
+*.so
+*.dylib
+plundrio
+
+# Test files
+*_test.go
+testdata/
+
+# Config files
+*.yaml
+*.yml
+renovate.json 

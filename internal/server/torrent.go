@@ -4,20 +4,121 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
+	"mime"
+	"net/http"
+	"net/url"
+	"path"
 	"strings"
+	"time"
 
 	"github.com/elsbrock/go-putio"
 	"github.com/elsbrock/plundrio/internal/log"
 )
 
-// findTransferByHash finds a transfer by its hash string
+// fetchTorrentFromURL downloads a .torrent from an arbitrary URL.
+//
+// Put.io resolves transfer URLs from its own cloud, so it cannot reach hosts
+// that only exist on our internal network (e.g. a Prowlarr instance addressed
+// as http://prowlarr:9696). When a Transmission client (Sonarr/Radarr/Lidarr)
+// hands us such a URL we fetch the torrent ourselves and upload the file bytes
+// to Put.io instead. Some indexers 30x-redirect a .torrent URL straight to a
+// magnet: link; in that case we surface the magnet so the caller can add it as
+// a transfer.
+func fetchTorrentFromURL(rawurl string) (data []byte, filename string, magnet string, err error) {
+	var magnetLink string
+	client := &http.Client{
+		Timeout: 60 * time.Second,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			if req.URL != nil && req.URL.Scheme == "magnet" {
+				magnetLink = req.URL.String()
+				return http.ErrUseLastResponse
+			}
+			if len(via) >= 10 {
+				return fmt.Errorf("stopped after 10 redirects")
+			}
+			return nil
+		},
+	}
+
+	resp, err := client.Get(rawurl)
+	if err != nil {
+		if magnetLink != "" {
+			return nil, "", magnetLink, nil
+		}
+		return nil, "", "", err
+	}
+	defer resp.Body.Close()
+
+	if magnetLink != "" {
+		return nil, "", magnetLink, nil
+	}
+	if loc := resp.Header.Get("Location"); strings.HasPrefix(loc, "magnet:") {
+		return nil, "", loc, nil
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, "", "", fmt.Errorf("unexpected status %d fetching torrent from %s", resp.StatusCode, rawurl)
+	}
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 32<<20)) // 32 MiB cap
+	if err != nil {
+		return nil, "", "", err
+	}
+	// The body itself may be a magnet link (some indexers return it as text).
+	if trimmed := strings.TrimSpace(string(body)); strings.HasPrefix(trimmed, "magnet:") {
+		return nil, "", trimmed, nil
+	}
+	return body, filenameFromResponse(resp, rawurl), "", nil
+}
+
+// filenameFromResponse derives a .torrent filename from a Content-Disposition
+// header, falling back to the URL path.
+func filenameFromResponse(resp *http.Response, rawurl string) string {
+	if cd := resp.Header.Get("Content-Disposition"); cd != "" {
+		if _, params, err := mime.ParseMediaType(cd); err == nil {
+			if fn := params["filename"]; fn != "" {
+				return ensureTorrentExt(fn)
+			}
+		}
+	}
+	if u, err := url.Parse(rawurl); err == nil {
+		if base := path.Base(u.Path); base != "" && base != "/" && base != "." {
+			return ensureTorrentExt(base)
+		}
+	}
+	return "download.torrent"
+}
+
+func ensureTorrentExt(name string) string {
+	if !strings.HasSuffix(strings.ToLower(name), ".torrent") {
+		return name + ".torrent"
+	}
+	return name
+}
+
+// normalizeHash converts a hash to lowercase for internal processing
+func normalizeHash(hash string) string {
+	return strings.ToLower(hash)
+}
+
+// hashesMatch performs case-insensitive hash comparison
+func hashesMatch(hash1, hash2 string) bool {
+	return normalizeHash(hash1) == normalizeHash(hash2)
+}
+
+// standardizeHashResponse converts hash to uppercase for response consistency
+func standardizeHashResponse(hash string) string {
+	return strings.ToUpper(hash)
+}
+
+// findTransferByHash finds a transfer by its hash string (case-insensitive)
 func (s *Server) findTransferByHash(hash string) (*putio.Transfer, error) {
 	transfers, err := s.client.GetTransfers()
 	if err != nil {
 		return nil, err
 	}
 	for _, t := range transfers {
-		if t.Hash == hash {
+		if hashesMatch(t.Hash, hash) {
 			return t, nil
 		}
 	}
@@ -61,6 +162,45 @@ func (s *Server) handleTorrentAdd(args json.RawMessage) (interface{}, error) {
 			Str("name", name).
 			Int64("folder_id", s.cfg.FolderID).
 			Msg("Torrent file uploaded")
+	} else if params.Filename != "" && (strings.HasPrefix(params.Filename, "http://") || strings.HasPrefix(params.Filename, "https://")) {
+		// Handle .torrent URLs (e.g. Prowlarr-proxied indexers). Put.io cannot
+		// reach internal hosts, so fetch the torrent ourselves and upload it.
+		data, fname, magnet, err := fetchTorrentFromURL(params.Filename)
+		if err != nil {
+			return nil, fmt.Errorf("failed to fetch torrent from url: %w", err)
+		}
+
+		if magnet != "" {
+			// The URL resolved to a magnet link; add it as a transfer instead.
+			if err := s.client.AddTransfer(magnet, s.cfg.FolderID); err != nil {
+				return nil, fmt.Errorf("failed to add transfer: %w", err)
+			}
+			log.Info("rpc").
+				Str("operation", "torrent-add").
+				Str("type", "magnet-via-url").
+				Str("magnet", magnet).
+				Int64("folder_id", s.cfg.FolderID).
+				Msg("Magnet link (resolved from url) added")
+			return map[string]interface{}{
+				"torrent-added": map[string]interface{}{},
+			}, nil
+		}
+
+		name = fname
+		if name == "" {
+			name = "download.torrent"
+		}
+		if err := s.client.UploadFile(data, name, s.cfg.FolderID); err != nil {
+			return nil, fmt.Errorf("failed to upload torrent: %w", err)
+		}
+
+		log.Info("rpc").
+			Str("operation", "torrent-add").
+			Str("type", "torrent-via-url").
+			Str("name", name).
+			Int("bytes", len(data)).
+			Int64("folder_id", s.cfg.FolderID).
+			Msg("Torrent file (fetched from url) uploaded")
 	} else {
 		// Handle magnet links
 		if params.MagnetLink != "" {
@@ -113,6 +253,17 @@ func (s *Server) handleTorrentGet(args json.RawMessage) (interface{}, error) {
 		Interface("fields", params.Fields).
 		Msg("Processing torrent-get request")
 
+	// Log hash normalization for debugging
+	if len(params.IDs) > 0 {
+		for _, id := range params.IDs {
+			log.Debug("rpc").
+				Str("operation", "torrent-get").
+				Str("query_hash", id).
+				Str("normalized_hash", normalizeHash(id)).
+				Msg("Hash query normalization")
+		}
+	}
+
 	// Get transfers from the processor, which now keeps track of all transfers
 	// including completed ones that have been processed
 	processor := s.dlManager.GetTransferProcessor()
@@ -146,7 +297,7 @@ func (s *Server) handleTorrentGet(args json.RawMessage) (interface{}, error) {
 		if len(params.IDs) > 0 {
 			found := false
 			for _, id := range params.IDs {
-				if id == t.Hash {
+				if hashesMatch(id, t.Hash) {
 					found = true
 					break
 				}
@@ -262,7 +413,7 @@ func (s *Server) handleTorrentGet(args json.RawMessage) (interface{}, error) {
 
 		torrentInfo := map[string]interface{}{
 			"id":             t.ID,
-			"hashString":     t.Hash,
+			"hashString":     standardizeHashResponse(t.Hash),
 			"name":           t.Name,
 			"eta":            t.EstimatedTime,
 			"status":         status,
@@ -290,7 +441,7 @@ func (s *Server) handleTorrentGet(args json.RawMessage) (interface{}, error) {
 		log.Debug("rpc").
 			Str("operation", "torrent-get").
 			Int64("id", t.ID).
-			Str("hash", t.Hash).
+			Str("hash", standardizeHashResponse(t.Hash)).
 			Str("name", t.Name).
 			Str("status", t.Status).
 			Int("size", t.Size).
@@ -330,6 +481,12 @@ func (s *Server) handleTorrentRemove(args json.RawMessage) (interface{}, error) 
 	}
 
 	for _, hash := range params.IDs {
+		log.Debug("rpc").
+			Str("operation", "torrent-remove").
+			Str("query_hash", hash).
+			Str("normalized_hash", normalizeHash(hash)).
+			Msg("Hash query normalization for removal")
+
 		transfer, err := s.findTransferByHash(hash)
 		if err != nil {
 			log.Error("rpc").

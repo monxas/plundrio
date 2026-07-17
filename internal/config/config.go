@@ -19,4 +19,7 @@ type Config struct {
 
 	// WorkerCount is the number of concurrent download workers (default: 4)
 	WorkerCount int
+
+	// DisableSessionAuth disables Transmission session ID requirement for local networks
+	DisableSessionAuth bool
 }

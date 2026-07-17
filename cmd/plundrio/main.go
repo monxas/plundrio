@@ -36,6 +36,9 @@ var runCmd = &cobra.Command{
 		// Initialize Viper
 		viper.SetEnvPrefix("PLDR")
 		viper.AutomaticEnv()
+		
+		// Explicitly bind environment variables for flags with hyphens
+		viper.BindEnv("disable-session-auth", "PLDR_DISABLE_SESSION_AUTH")
 
 		configFile, _ := cmd.Flags().GetString("config")
 		if configFile != "" {
@@ -66,12 +69,14 @@ var runCmd = &cobra.Command{
 		oauthToken := viper.GetString("token")
 		listenAddr := viper.GetString("listen")
 		workerCount := viper.GetInt("workers")
+		disableSessionAuth := viper.GetBool("disable-session-auth")
 
 		log.Debug("config").
 			Str("target_dir", targetDir).
 			Str("putio_folder", putioFolder).
 			Str("listen_addr", listenAddr).
 			Int("workers", workerCount).
+			Bool("disable_session_auth", disableSessionAuth).
 			Msg("Configuration loaded")
 
 		// Validate required configuration values
@@ -102,11 +107,12 @@ var runCmd = &cobra.Command{
 
 		// Initialize configuration
 		cfg := &config.Config{
-			TargetDir:   targetDir,
-			PutioFolder: putioFolder,
-			OAuthToken:  oauthToken,
-			ListenAddr:  listenAddr,
-			WorkerCount: workerCount,
+			TargetDir:          targetDir,
+			PutioFolder:        putioFolder,
+			OAuthToken:         oauthToken,
+			ListenAddr:         listenAddr,
+			WorkerCount:        workerCount,
+			DisableSessionAuth: disableSessionAuth,
 		}
 
 		// Initialize Put.io API client
@@ -182,9 +188,10 @@ token: "" 									# Get a token with get-token
 listen: ":9091"							# Transmission RPC server address
 workers: 4									# Number of download workers
 log_level: "info"					  # Log level (trace,debug,info,warn,error,fatal,panic,none,pretty)
+disable_session_auth: false  # Disable Transmission session ID requirement for local networks
 
 # Environment variables:
-# PLDR_TARGET, PLDR_FOLDER, PLDR_TOKEN, PLDR_LISTEN, PLDR_WORKERS, PLDR_LOG_LEVEL
+# PLDR_TARGET, PLDR_FOLDER, PLDR_TOKEN, PLDR_LISTEN, PLDR_WORKERS, PLDR_LOG_LEVEL, PLDR_DISABLE_SESSION_AUTH
 `
 
 		outputPath := "plundrio-config.yaml"
@@ -286,6 +293,7 @@ func init() {
 	runCmd.Flags().StringP("listen", "l", ":9091", "Listen address")
 	runCmd.Flags().IntP("workers", "w", 4, "Number of workers")
 	runCmd.Flags().String("log-level", "", "Log level (trace,debug,info,warn,error,fatal,none,pretty)")
+	runCmd.Flags().Bool("disable-session-auth", false, "Disable Transmission session ID requirement for local networks")
 
 	rootCmd.AddCommand(runCmd)
 	rootCmd.AddCommand(getTokenCmd)

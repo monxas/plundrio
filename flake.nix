@@ -78,6 +78,12 @@
               default = "plundrio";
               description = "Group under which plundrio runs";
             };
+
+            disableSessionAuth = lib.mkOption {
+              type = lib.types.bool;
+              default = false;
+              description = "Disable Transmission session ID requirement for local networks";
+            };
           };
 
           config = lib.mkIf cfg.enable {
@@ -122,7 +128,8 @@
                     --folder ${lib.escapeShellArg cfg.putioFolder} \
                     --listen ${lib.escapeShellArg cfg.listenAddr} \
                     --workers ${toString cfg.workerCount} \
-                    --log-level ${cfg.logLevel}
+                    --log-level ${cfg.logLevel} \
+                    ${lib.optionalString cfg.disableSessionAuth "--disable-session-auth"}
                 '';
                 Restart = "on-failure";
                 RestartSec = "10s";
