@@ -5,19 +5,21 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/elsbrock/go-putio"
 	"github.com/elsbrock/plundrio/internal/log"
 )
 
-// findTransferByHash finds a transfer by its hash string
+// findTransferByHash finds a transfer by its hash string (case-insensitive)
 func (s *Server) findTransferByHash(hash string) (*putio.Transfer, error) {
 	transfers, err := s.client.GetTransfers()
 	if err != nil {
 		return nil, err
 	}
+	want := strings.ToLower(hash)
 	for _, t := range transfers {
-		if t.Hash == hash {
+		if strings.ToLower(t.Hash) == want {
 			return t, nil
 		}
 	}
@@ -27,16 +29,18 @@ func (s *Server) findTransferByHash(hash string) (*putio.Transfer, error) {
 // handleTorrentAdd processes torrent-add requests
 func (s *Server) handleTorrentAdd(args json.RawMessage) (interface{}, error) {
 	var params struct {
-		Filename    string `json:"filename"`    // For .torrent files
-		MetaInfo    string `json:"metainfo"`    // Base64 encoded .torrent
-		MagnetLink  string `json:"magnetLink"`  // Magnet link
-		DownloadDir string `json:"downloadDir"` // Ignored, we use Put.io
+		Filename    string   `json:"filename"`    // For .torrent files or magnet URI
+		MetaInfo    string   `json:"metainfo"`    // Base64 encoded .torrent
+		MagnetLink  string   `json:"magnetLink"`  // Magnet link
+		DownloadDir string   `json:"downloadDir"` // Ignored, we use Put.io
+		Labels      []string `json:"labels"`      // Transmission labels (categories)
 	}
 
 	if err := json.Unmarshal(args, &params); err != nil {
 		return nil, fmt.Errorf("invalid arguments: %w", err)
 	}
 	var name string
+	var infoHash string
 
 	// Handle .torrent file upload if metainfo is provided
 	if params.MetaInfo != "" {
@@ -71,21 +75,34 @@ func (s *Server) handleTorrentAdd(args json.RawMessage) (interface{}, error) {
 			return nil, fmt.Errorf("invalid torrent or magnet link provided")
 		}
 
+		infoHash = magnetInfoHash(name)
+
 		// Add magnet link to Put.io
 		if err := s.client.AddTransfer(name, s.cfg.FolderID); err != nil {
 			return nil, fmt.Errorf("failed to add transfer: %w", err)
+		}
+
+		if infoHash != "" && len(params.Labels) > 0 && s.labels != nil {
+			s.labels.Set(infoHash, params.Labels)
 		}
 
 		log.Info("rpc").
 			Str("operation", "torrent-add").
 			Str("type", "magnet").
 			Str("magnet", name).
+			Str("hash", infoHash).
+			Interface("labels", params.Labels).
 			Int64("folder_id", s.cfg.FolderID).
 			Msg("Magnet link added")
 
-		// Return success response
+		// Return success response (include hash so clients can label/set immediately)
+		added := map[string]interface{}{}
+		if infoHash != "" {
+			added["hashString"] = infoHash
+			added["id"] = infoHash
+		}
 		return map[string]interface{}{
-			"torrent-added": map[string]interface{}{},
+			"torrent-added": added,
 		}, nil
 	}
 
@@ -93,6 +110,34 @@ func (s *Server) handleTorrentAdd(args json.RawMessage) (interface{}, error) {
 	return map[string]interface{}{
 		"torrent-added": map[string]interface{}{},
 	}, nil
+}
+
+// handleTorrentSet updates torrent properties (labels/categories for OnePacerr).
+func (s *Server) handleTorrentSet(args json.RawMessage) (interface{}, error) {
+	var params struct {
+		IDs    []string `json:"ids"`
+		Labels []string `json:"labels"`
+	}
+	if err := json.Unmarshal(args, &params); err != nil {
+		return nil, fmt.Errorf("invalid arguments: %w", err)
+	}
+	if s.labels == nil {
+		return struct{}{}, nil
+	}
+	for _, id := range params.IDs {
+		// ids may be hashString or numeric put.io id — try as hash first
+		hash := id
+		if transfer, err := s.findTransferByHash(id); err == nil {
+			hash = transfer.Hash
+		}
+		s.labels.Set(hash, params.Labels)
+		log.Info("rpc").
+			Str("operation", "torrent-set").
+			Str("hash", hash).
+			Interface("labels", params.Labels).
+			Msg("Updated torrent labels")
+	}
+	return struct{}{}, nil
 }
 
 // handleTorrentGet processes torrent-get requests
@@ -142,11 +187,11 @@ func (s *Server) handleTorrentGet(args json.RawMessage) (interface{}, error) {
 	// Convert Put.io transfers to transmission format
 	torrents := make([]map[string]interface{}, 0, len(transfers))
 	for _, t := range transfers {
-		// Filter by IDs if specified
+		// Filter by IDs if specified (case-insensitive hash match)
 		if len(params.IDs) > 0 {
 			found := false
 			for _, id := range params.IDs {
-				if id == t.Hash {
+				if strings.EqualFold(id, t.Hash) {
 					found = true
 					break
 				}
@@ -260,6 +305,20 @@ func (s *Server) handleTorrentGet(args json.RawMessage) (interface{}, error) {
 				Msg("Calculated progress for transfer without context")
 		}
 
+		labels := []string{}
+		if s.labels != nil {
+			labels = s.labels.Get(t.Hash)
+		}
+
+		// @ctrl/transmission normalizes dates via Date(ts * 1000).toISOString()
+		// and crashes on missing/invalid values — always emit sane unix seconds.
+		nowUnix := time.Now().Unix()
+		addedDate := nowUnix
+		doneDate := int64(0)
+		if percentDone >= 1.0 {
+			doneDate = nowUnix
+		}
+
 		torrentInfo := map[string]interface{}{
 			"id":             t.ID,
 			"hashString":     t.Hash,
@@ -268,12 +327,23 @@ func (s *Server) handleTorrentGet(args json.RawMessage) (interface{}, error) {
 			"status":         status,
 			"downloadDir":    s.cfg.TargetDir,
 			"totalSize":      t.Size,
+			"sizeWhenDone":   t.Size,
 			"leftUntilDone":  leftUntilDone,
 			"uploadedEver":   t.Uploaded,
 			"downloadedEver": t.Downloaded,
 			"percentDone":    percentDone,
 			"rateDownload":   t.DownloadSpeed,
 			"rateUpload":     t.UploadSpeed,
+			"labels":         labels,
+			"addedDate":      addedDate,
+			"doneDate":       doneDate,
+			"activityDate":   nowUnix,
+			"queuePosition":  0,
+			"peersConnected": 0,
+			"peersSendingToUs": 0,
+			"peersGettingFromUs": 0,
+			"isFinished":     percentDone >= 1.0,
+			"isStalled":      false,
 			"uploadRatio": func() float64 {
 				if t.Size > 0 {
 					return float64(t.Uploaded) / float64(t.Size)
@@ -282,6 +352,11 @@ func (s *Server) handleTorrentGet(args json.RawMessage) (interface{}, error) {
 			}(),
 			"error":       t.ErrorMessage != "",
 			"errorString": t.ErrorMessage,
+			// Empty arrays so clients iterating fields don't NPE
+			"files":     []interface{}{},
+			"fileStats": []interface{}{},
+			"trackers":  []interface{}{},
+			"peers":     []interface{}{},
 		}
 
 		torrents = append(torrents, torrentInfo)
@@ -358,6 +433,9 @@ func (s *Server) handleTorrentRemove(args json.RawMessage) (interface{}, error) 
 				Err(err).
 				Msg("Failed to delete transfer")
 		} else {
+			if s.labels != nil {
+				s.labels.Delete(transfer.Hash)
+			}
 			log.Info("rpc").
 				Str("operation", "torrent-remove").
 				Str("hash", hash).

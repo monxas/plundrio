@@ -83,6 +83,8 @@ func (s *Server) handleRPC(w http.ResponseWriter, r *http.Request) {
 		result, err = s.handleTorrentAdd(req.Arguments)
 	case "torrent-get":
 		result, err = s.handleTorrentGet(req.Arguments)
+	case "torrent-set":
+		result, err = s.handleTorrentSet(req.Arguments)
 	case "torrent-remove":
 		result, err = s.handleTorrentRemove(req.Arguments)
 	case "session-get":

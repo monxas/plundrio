@@ -2,6 +2,7 @@ package server
 
 import (
 	"net/http"
+	"os"
 	"time"
 
 	_ "net/http/pprof"
@@ -21,16 +22,24 @@ type Server struct {
 	stopChan     chan struct{}
 	dlManager    *download.Manager
 	quotaWarning bool // tracks if we've already warned about quota
+	labels       *LabelStore
 }
 
 // New creates a new RPC server
 func New(cfg *config.Config, client *api.Client, dlManager *download.Manager) *Server {
+	// Persist labels under target dir (mounted /config or /downloads parent).
+	// Prefer /config if present (docker layout), else TargetDir.
+	labelDir := "/config"
+	if st, err := os.Stat(labelDir); err != nil || !st.IsDir() {
+		labelDir = cfg.TargetDir
+	}
 	return &Server{
 		cfg:         cfg,
 		client:      client,
 		stopChan:    make(chan struct{}),
 		dlManager:   dlManager,
 		quotaTicker: time.NewTicker(15 * time.Minute),
+		labels:      NewLabelStore(labelDir),
 	}
 }
 
