@@ -42,10 +42,14 @@ updates:
       go-seguridad:
         applies-to: security-updates
         patterns: ['*']
+      # Sin `update-types` a propósito: el `allow` de arriba ya deja fuera los
+      # mayores, y con `update-types: [minor, patch]` AQUÍ se escapaban del grupo
+      # los PRs de rango de requirements.txt ("update requests requirement from
+      # >=2.28.0 to >=2.34.2"), que no casan con esos tipos: la primera pasada
+      # abrió 4 PRs sueltos en plundrio-ecosystem por eso mismo.
       go-mantenimiento:
         applies-to: version-updates
         patterns: ['*']
-        update-types: [minor, patch]
 
   - package-ecosystem: github-actions
     directory: /
@@ -62,7 +66,6 @@ updates:
       actions-mantenimiento:
         applies-to: version-updates
         patterns: ['*']
-        update-types: [minor, patch]
 
   - package-ecosystem: docker
     directory: /
