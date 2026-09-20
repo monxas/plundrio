@@ -23,6 +23,23 @@ var (
 	version = "dev"
 )
 
+// initViperEnv wires environment-variable lookup for every configuration key.
+//
+// All of our configuration keys mirror the cobra flag names, and most of them
+// are hyphenated ("auto-cancel-stuck", "sonarr-url", ...). On its own,
+// AutomaticEnv() derives the variable name by upper-casing the key and
+// prefixing it, which yields names like PLDR_AUTO-CANCEL-STUCK. Hyphens are not
+// legal in POSIX shell variable names, so no shell, systemd unit or Docker
+// Compose file can ever set them and every hyphenated option silently kept its
+// flag default. SetEnvKeyReplacer translates "-" to "_" during the env lookup
+// only (config-file and flag keys are untouched), so "auto-cancel-stuck" now
+// resolves from PLDR_AUTO_CANCEL_STUCK as documented.
+func initViperEnv(v *viper.Viper) {
+	v.SetEnvPrefix("PLDR")
+	v.SetEnvKeyReplacer(strings.NewReplacer("-", "_"))
+	v.AutomaticEnv()
+}
+
 var rootCmd = &cobra.Command{
 	Use:     "plundrio",
 	Short:   "Put.io automation tool",
@@ -34,13 +51,7 @@ var runCmd = &cobra.Command{
 	Short: "Run the download manager",
 	Run: func(cmd *cobra.Command, args []string) {
 		// Initialize Viper
-		viper.SetEnvPrefix("PLDR")
-		viper.AutomaticEnv()
-
-		// viper.AutomaticEnv() maps a key like "disable-session-auth" to
-		// PLDR_DISABLE-SESSION-AUTH, which is not a usable shell variable name,
-		// so hyphenated keys must be bound to their underscore form explicitly.
-		viper.BindEnv("disable-session-auth", "PLDR_DISABLE_SESSION_AUTH")
+		initViperEnv(viper.GetViper())
 
 		configFile, _ := cmd.Flags().GetString("config")
 		if configFile != "" {
@@ -109,11 +120,13 @@ var runCmd = &cobra.Command{
 			Bool("disable_session_auth", disableSessionAuth).
 			Msg("Configuration loaded")
 
-		// Log *arr integration status
+		// Log *arr integration status. The booleans mirror config.HasSonarr /
+		// HasRadarr (URL *and* API key), so the log cannot claim an integration is
+		// live when a missing API key actually leaves it disabled.
 		if sonarrURL != "" || radarrURL != "" {
 			log.Info("config").
-				Bool("sonarr_configured", sonarrURL != "").
-				Bool("radarr_configured", radarrURL != "").
+				Bool("sonarr_configured", sonarrURL != "" && sonarrAPIKey != "").
+				Bool("radarr_configured", radarrURL != "" && radarrAPIKey != "").
 				Msg("*arr integration enabled")
 		}
 
@@ -124,13 +137,26 @@ var runCmd = &cobra.Command{
 				Msg("ntfy notifications enabled")
 		}
 
-		// Log auto-cancel status
+		// Log auto-cancel status. This is logged in both directions on purpose:
+		// auto-cancel deletes Put.io transfers, so "it is off" must be visible in
+		// the startup log rather than inferred from a missing line.
 		if autoCancelStuck {
 			log.Info("config").
 				Dur("timeout", autoCancelTimeout).
 				Bool("research_enabled", autoCancelResearch).
 				Msg("Auto-cancel stuck transfers enabled")
+		} else {
+			log.Info("config").
+				Msg("Auto-cancel stuck transfers disabled")
 		}
+
+		// Log download-ordering status. Without this, priority/sequential were
+		// only observable in a debug-level log emitted while queueing files.
+		log.Info("config").
+			Bool("priority_enabled", priorityEnabled).
+			Bool("sequential_download", sequentialDownload).
+			Bool("small_file_priority", smallFilePriority).
+			Msg("Download ordering configured")
 
 		// Validate required configuration values
 		// Security warning for token in config file
