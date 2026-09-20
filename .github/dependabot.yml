@@ -1,0 +1,77 @@
+version: 2
+# Sustituye al `renovate.json` que venía heredado del upstream (elsbrock/plundrio)
+# y que se ha borrado en el mismo commit. Por qué se cambia de herramienta:
+#
+#   · Renovate NO estaba corriendo aquí. En este fork no ha existido nunca un PR
+#     de Renovate (y no podría abrir su Dependency Dashboard: las issues están
+#     desactivadas). Lo único que dejó son 5 ramas renovate/* congeladas entre
+#     septiembre y diciembre de 2025, que vinieron copiadas del upstream al forkear.
+#     Era configuración muerta, no un automatismo.
+#   · Si algún día se instalara la app de Renovate en la cuenta, `config:recommended`
+#     empezaría a abrir un PR por dependencia y por mayor, justo lo contrario de lo
+#     que se acaba de montar en los demás repos, y se pelearía con Dependabot por
+#     las mismas ramas.
+#   · Lo que hay montado en casa cierra PRs de Dependabot (worker `dependabot_worker.py`
+#     en VM208). De Renovate no sabe nada.
+#
+# Las 5 ramas de Renovate no aportaban nada que no se pueda regenerar: proponían
+# cobra 1.10.2, viper 1.21.0, oauth2 0.34.0, go 1.25.5 y actions/checkout v6 sobre
+# un árbol de hace 9-12 meses (main va por cobra 1.9.1, viper 1.20.1, oauth2
+# 0.28.0, go 1.23.0). El retraso es real, así que Dependabot lo volverá a proponer
+# — pero en un PR agrupado y sobre el main de verdad, no sobre el de 2025.
+#
+# plundrio se despliega a mano en el homelab, así que un merge malo se revierte.
+updates:
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: '10:00'
+      timezone: Europe/Madrid
+    open-pull-requests-limit: 2
+    labels: [dependencies, go]
+    commit-message:
+      prefix: deps
+    allow:
+      - dependency-name: '*'
+        update-types:
+          - version-update:semver-minor
+          - version-update:semver-patch
+    groups:
+      go-seguridad:
+        applies-to: security-updates
+        patterns: ['*']
+      go-mantenimiento:
+        applies-to: version-updates
+        patterns: ['*']
+        update-types: [minor, patch]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 1
+    labels: [dependencies, ci]
+    commit-message:
+      prefix: ci
+    groups:
+      actions-seguridad:
+        applies-to: security-updates
+        patterns: ['*']
+      actions-mantenimiento:
+        applies-to: version-updates
+        patterns: ['*']
+        update-types: [minor, patch]
+
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 1
+    labels: [dependencies, docker]
+    commit-message:
+      prefix: deps(docker)
+    groups:
+      docker-base:
+        patterns: ['*']
