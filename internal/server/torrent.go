@@ -95,6 +95,22 @@ func filenameFromResponse(resp *http.Response, rawurl string) string {
 	return "download.torrent"
 }
 
+// firstHTTPURL returns the first candidate that is an http(s) URL.
+//
+// Transmission clients are inconsistent about where they put a .torrent URL:
+// Sonarr/Radarr use "filename", but this RPC also accepts a "magnetLink"
+// argument, and that branch used to hand whatever it got straight to
+// Put.io's /v2/transfers/add — which is how an internal URL turned into
+// `putio error code:404 FileNotFound`. Both fields are screened here.
+func firstHTTPURL(candidates ...string) string {
+	for _, c := range candidates {
+		if strings.HasPrefix(c, "http://") || strings.HasPrefix(c, "https://") {
+			return c
+		}
+	}
+	return ""
+}
+
 // ensureTorrentExt makes sure the uploaded file name ends in .torrent so Put.io
 // treats it as a torrent instead of a plain file.
 func ensureTorrentExt(name string) string {
@@ -158,10 +174,10 @@ func (s *Server) handleTorrentAdd(args json.RawMessage) (interface{}, error) {
 			Str("name", name).
 			Int64("folder_id", s.cfg.FolderID).
 			Msg("Torrent file uploaded")
-	} else if params.Filename != "" && (strings.HasPrefix(params.Filename, "http://") || strings.HasPrefix(params.Filename, "https://")) {
+	} else if torrentURL := firstHTTPURL(params.Filename, params.MagnetLink); torrentURL != "" {
 		// Handle .torrent URLs (e.g. Prowlarr-proxied indexers). Put.io cannot
 		// reach internal hosts, so fetch the torrent ourselves and upload it.
-		data, fname, magnet, err := fetchTorrentFromURL(params.Filename)
+		data, fname, magnet, err := fetchTorrentFromURL(torrentURL)
 		if err != nil {
 			return nil, fmt.Errorf("failed to fetch torrent from url: %w", err)
 		}

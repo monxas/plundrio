@@ -144,6 +144,34 @@ func TestFilenameFromResponse_DefaultsWhenNothingUsable(t *testing.T) {
 	}
 }
 
+func TestFirstHTTPURL(t *testing.T) {
+	const magnet = "magnet:?xt=urn:btih:abcdef0123456789abcdef0123456789abcdef01"
+	const httpURL = "http://prowlarr:9696/api/v1/indexer/5/download?apikey=k"
+
+	cases := []struct {
+		name       string
+		candidates []string
+		want       string
+	}{
+		// Sonarr/Radarr put the .torrent URL in "filename".
+		{"filename holds the url", []string{httpURL, ""}, httpURL},
+		// The magnetLink field used to be forwarded to Put.io verbatim,
+		// producing `putio error code:404 FileNotFound` for internal hosts.
+		{"magnetLink holds the url", []string{"", httpURL}, httpURL},
+		{"https is accepted", []string{"https://indexer/dl.torrent"}, "https://indexer/dl.torrent"},
+		// Real magnets must fall through to the magnet branch.
+		{"magnet is not an http url", []string{magnet, magnet}, ""},
+		{"empty", []string{"", ""}, ""},
+		// Guard against scheme-prefix lookalikes.
+		{"not a url", []string{"httpsomething"}, ""},
+	}
+	for _, tc := range cases {
+		if got := firstHTTPURL(tc.candidates...); got != tc.want {
+			t.Errorf("%s: firstHTTPURL(%q) = %q, want %q", tc.name, tc.candidates, got, tc.want)
+		}
+	}
+}
+
 func TestMagnetInfoHashFromRedirectedMagnet(t *testing.T) {
 	// The URL branch relies on magnetInfoHash to keep OnePacerr labels working.
 	const magnet = "magnet:?xt=urn:btih:2FCAB232E5C128CDBD638B2C6F6799D17D218C49&dn=Test"
