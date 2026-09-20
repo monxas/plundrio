@@ -37,6 +37,11 @@ var runCmd = &cobra.Command{
 		viper.SetEnvPrefix("PLDR")
 		viper.AutomaticEnv()
 
+		// viper.AutomaticEnv() maps a key like "disable-session-auth" to
+		// PLDR_DISABLE-SESSION-AUTH, which is not a usable shell variable name,
+		// so hyphenated keys must be bound to their underscore form explicitly.
+		viper.BindEnv("disable-session-auth", "PLDR_DISABLE_SESSION_AUTH")
+
 		configFile, _ := cmd.Flags().GetString("config")
 		if configFile != "" {
 			viper.SetConfigFile(configFile)
@@ -66,6 +71,7 @@ var runCmd = &cobra.Command{
 		oauthToken := viper.GetString("token")
 		listenAddr := viper.GetString("listen")
 		workerCount := viper.GetInt("workers")
+		disableSessionAuth := viper.GetBool("disable-session-auth")
 
 		// Sonarr/Radarr integration
 		sonarrURL := viper.GetString("sonarr-url")
@@ -100,6 +106,7 @@ var runCmd = &cobra.Command{
 			Str("putio_folder", putioFolder).
 			Str("listen_addr", listenAddr).
 			Int("workers", workerCount).
+			Bool("disable_session_auth", disableSessionAuth).
 			Msg("Configuration loaded")
 
 		// Log *arr integration status
@@ -153,11 +160,12 @@ var runCmd = &cobra.Command{
 
 		// Initialize configuration
 		cfg := &config.Config{
-			TargetDir:   targetDir,
-			PutioFolder: putioFolder,
-			OAuthToken:  oauthToken,
-			ListenAddr:  listenAddr,
-			WorkerCount: workerCount,
+			TargetDir:          targetDir,
+			PutioFolder:        putioFolder,
+			OAuthToken:         oauthToken,
+			ListenAddr:         listenAddr,
+			WorkerCount:        workerCount,
+			DisableSessionAuth: disableSessionAuth,
 
 			// Sonarr/Radarr integration
 			SonarrURL:    sonarrURL,
@@ -399,6 +407,7 @@ func init() {
 	runCmd.Flags().StringP("listen", "l", ":9091", "Listen address")
 	runCmd.Flags().IntP("workers", "w", 4, "Number of workers")
 	runCmd.Flags().String("log-level", "", "Log level (trace,debug,info,warn,error,fatal,none,pretty)")
+	runCmd.Flags().Bool("disable-session-auth", false, "Disable Transmission session ID requirement for local networks")
 
 	// Sonarr/Radarr integration flags
 	runCmd.Flags().String("sonarr-url", "", "Sonarr URL (e.g., http://sonarr:8989)")

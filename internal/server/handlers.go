@@ -11,9 +11,9 @@ import (
 
 // handleRPC processes transmission-rpc requests
 func (s *Server) handleRPC(w http.ResponseWriter, r *http.Request) {
-	// Check for session ID header
+	// Check for session ID header (unless explicitly disabled)
 	sessionID := r.Header.Get("X-Transmission-Session-Id")
-	if sessionID == "" {
+	if !s.cfg.DisableSessionAuth && sessionID == "" {
 		// Client needs to authenticate - send session ID
 		log.Info("rpc").
 			Str("client_addr", r.RemoteAddr).

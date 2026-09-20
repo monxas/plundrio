@@ -22,6 +22,10 @@ type Config struct {
 	// WorkerCount is the number of concurrent download workers (default: 4)
 	WorkerCount int
 
+	// DisableSessionAuth disables the Transmission session ID (CSRF) handshake.
+	// Only sensible on trusted local networks; defaults to false.
+	DisableSessionAuth bool
+
 	// Sonarr integration
 	SonarrURL    string
 	SonarrAPIKey string

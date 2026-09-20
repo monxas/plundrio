@@ -94,6 +94,14 @@ func (s *Server) Start() error {
 		}
 	}()
 
+	// Advertise the capabilities that are easy to lose in a rebuild, so the
+	// running image can be identified from its logs alone.
+	log.Info("server").
+		Bool("torrent_url_fetch", true).
+		Bool("labels", s.labels != nil).
+		Bool("session_auth_disabled", s.cfg.DisableSessionAuth).
+		Msg("RPC capabilities: local .torrent URL fetch enabled")
+
 	log.Info("server").Str("addr", s.cfg.ListenAddr).Msg("Starting transmission-rpc server")
 	return s.srv.ListenAndServe()
 }

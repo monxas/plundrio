@@ -4,12 +4,105 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
+	"mime"
+	"net/http"
+	"net/url"
+	"path"
 	"strings"
 	"time"
 
 	"github.com/elsbrock/go-putio"
 	"github.com/elsbrock/plundrio/internal/log"
 )
+
+// maxTorrentBytes caps how much we are willing to read from a .torrent URL.
+const maxTorrentBytes = 32 << 20 // 32 MiB
+
+// fetchTorrentFromURL downloads a .torrent from an arbitrary URL.
+//
+// Put.io resolves transfer URLs from its own cloud, so it cannot reach hosts
+// that only exist on our internal network (e.g. a Prowlarr instance addressed
+// as http://prowlarr:9696). When a Transmission client (Sonarr/Radarr/Lidarr)
+// hands us such a URL we fetch the torrent ourselves and upload the file bytes
+// to Put.io instead. Some indexers 30x-redirect a .torrent URL straight to a
+// magnet: link; in that case we surface the magnet so the caller can add it as
+// a transfer.
+func fetchTorrentFromURL(rawurl string) (data []byte, filename string, magnet string, err error) {
+	var magnetLink string
+	client := &http.Client{
+		Timeout: 60 * time.Second,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			if req.URL != nil && req.URL.Scheme == "magnet" {
+				magnetLink = req.URL.String()
+				return http.ErrUseLastResponse
+			}
+			if len(via) >= 10 {
+				return fmt.Errorf("stopped after 10 redirects")
+			}
+			return nil
+		},
+	}
+
+	resp, err := client.Get(rawurl)
+	if err != nil {
+		if magnetLink != "" {
+			return nil, "", magnetLink, nil
+		}
+		return nil, "", "", err
+	}
+	defer resp.Body.Close()
+
+	if magnetLink != "" {
+		return nil, "", magnetLink, nil
+	}
+	if loc := resp.Header.Get("Location"); strings.HasPrefix(loc, "magnet:") {
+		return nil, "", loc, nil
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, "", "", fmt.Errorf("unexpected status %d fetching torrent from %s", resp.StatusCode, rawurl)
+	}
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxTorrentBytes))
+	if err != nil {
+		return nil, "", "", err
+	}
+	// The body itself may be a magnet link (some indexers return it as text).
+	if trimmed := strings.TrimSpace(string(body)); strings.HasPrefix(trimmed, "magnet:") {
+		return nil, "", trimmed, nil
+	}
+	if len(body) == 0 {
+		return nil, "", "", fmt.Errorf("empty response body fetching torrent from %s", rawurl)
+	}
+	return body, filenameFromResponse(resp, rawurl), "", nil
+}
+
+// filenameFromResponse derives a .torrent filename from a Content-Disposition
+// header, falling back to the URL path.
+func filenameFromResponse(resp *http.Response, rawurl string) string {
+	if cd := resp.Header.Get("Content-Disposition"); cd != "" {
+		if _, params, err := mime.ParseMediaType(cd); err == nil {
+			if fn := params["filename"]; fn != "" {
+				return ensureTorrentExt(path.Base(fn))
+			}
+		}
+	}
+	if u, err := url.Parse(rawurl); err == nil {
+		if base := path.Base(u.Path); base != "" && base != "/" && base != "." {
+			return ensureTorrentExt(base)
+		}
+	}
+	return "download.torrent"
+}
+
+// ensureTorrentExt makes sure the uploaded file name ends in .torrent so Put.io
+// treats it as a torrent instead of a plain file.
+func ensureTorrentExt(name string) string {
+	if !strings.HasSuffix(strings.ToLower(name), ".torrent") {
+		return name + ".torrent"
+	}
+	return name
+}
 
 // findTransferByHash finds a transfer by its hash string (case-insensitive)
 func (s *Server) findTransferByHash(hash string) (*putio.Transfer, error) {
@@ -65,6 +158,59 @@ func (s *Server) handleTorrentAdd(args json.RawMessage) (interface{}, error) {
 			Str("name", name).
 			Int64("folder_id", s.cfg.FolderID).
 			Msg("Torrent file uploaded")
+	} else if params.Filename != "" && (strings.HasPrefix(params.Filename, "http://") || strings.HasPrefix(params.Filename, "https://")) {
+		// Handle .torrent URLs (e.g. Prowlarr-proxied indexers). Put.io cannot
+		// reach internal hosts, so fetch the torrent ourselves and upload it.
+		data, fname, magnet, err := fetchTorrentFromURL(params.Filename)
+		if err != nil {
+			return nil, fmt.Errorf("failed to fetch torrent from url: %w", err)
+		}
+
+		if magnet != "" {
+			// The URL resolved to a magnet link; add it as a transfer instead.
+			if err := s.client.AddTransfer(magnet, s.cfg.FolderID); err != nil {
+				return nil, fmt.Errorf("failed to add transfer: %w", err)
+			}
+
+			infoHash = magnetInfoHash(magnet)
+			if infoHash != "" && len(params.Labels) > 0 && s.labels != nil {
+				s.labels.Set(infoHash, params.Labels)
+			}
+
+			log.Info("rpc").
+				Str("operation", "torrent-add").
+				Str("type", "magnet-via-url").
+				Str("magnet", magnet).
+				Str("hash", infoHash).
+				Interface("labels", params.Labels).
+				Int64("folder_id", s.cfg.FolderID).
+				Msg("Magnet link (resolved from url) added")
+
+			added := map[string]interface{}{}
+			if infoHash != "" {
+				added["hashString"] = infoHash
+				added["id"] = infoHash
+			}
+			return map[string]interface{}{
+				"torrent-added": added,
+			}, nil
+		}
+
+		name = fname
+		if name == "" {
+			name = "download.torrent"
+		}
+		if err := s.client.UploadFile(data, name, s.cfg.FolderID); err != nil {
+			return nil, fmt.Errorf("failed to upload torrent: %w", err)
+		}
+
+		log.Info("rpc").
+			Str("operation", "torrent-add").
+			Str("type", "torrent-via-url").
+			Str("name", name).
+			Int("bytes", len(data)).
+			Int64("folder_id", s.cfg.FolderID).
+			Msg("Torrent file (fetched from url) uploaded")
 	} else {
 		// Handle magnet links
 		if params.MagnetLink != "" {
