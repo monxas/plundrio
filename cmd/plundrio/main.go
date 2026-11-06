@@ -95,6 +95,7 @@ var runCmd = &cobra.Command{
 		// Notification settings
 		ntfyURL := viper.GetString("ntfy-url")
 		ntfyTopic := viper.GetString("ntfy-topic")
+		ntfyToken := viper.GetString("ntfy-token")
 
 		// Auto-cancel settings
 		autoCancelStuck := viper.GetBool("auto-cancel-stuck")
@@ -133,7 +134,7 @@ var runCmd = &cobra.Command{
 		// Log notification status
 		if ntfyURL != "" && ntfyTopic != "" {
 			log.Info("config").
-				Str("ntfy_topic", ntfyTopic).
+				Bool("authenticated", ntfyToken != "").
 				Msg("ntfy notifications enabled")
 		}
 
@@ -204,6 +205,7 @@ var runCmd = &cobra.Command{
 			// Notifications
 			NtfyURL:   ntfyURL,
 			NtfyTopic: ntfyTopic,
+			NtfyToken: ntfyToken,
 
 			// Auto-cancel stuck transfers
 			AutoCancelStuck:    autoCancelStuck,
@@ -446,6 +448,7 @@ func init() {
 	// Notification flags
 	runCmd.Flags().String("ntfy-url", "https://ntfy.sh", "ntfy server URL")
 	runCmd.Flags().String("ntfy-topic", "", "ntfy topic for notifications")
+	runCmd.Flags().String("ntfy-token", "", "ntfy bearer token (prefer PLDR_NTFY_TOKEN)")
 
 	// Auto-cancel flags
 	runCmd.Flags().Bool("auto-cancel-stuck", false, "Auto-cancel stuck Put.io transfers")

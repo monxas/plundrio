@@ -54,6 +54,7 @@ func TestHyphenatedKeysResolveFromUnderscoreEnvVars(t *testing.T) {
 		{"local-path", "PLDR_LOCAL_PATH", "/downloads", "/downloads"},
 		{"ntfy-url", "PLDR_NTFY_URL", "http://ntfy:80", "http://ntfy:80"},
 		{"ntfy-topic", "PLDR_NTFY_TOPIC", "plundrio", "plundrio"},
+		{"ntfy-token", "PLDR_NTFY_TOKEN", "synthetic-token", "synthetic-token"},
 		{"log-level", "PLDR_LOG_LEVEL", "info", "info"},
 	}
 

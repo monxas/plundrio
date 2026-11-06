@@ -2,6 +2,7 @@ package notify
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"net/http"
 	"time"
@@ -25,14 +26,14 @@ const (
 type EventType string
 
 const (
-	EventTransferComplete   EventType = "transfer_complete"
-	EventTransferFailed     EventType = "transfer_failed"
-	EventTransferStuck      EventType = "transfer_stuck"
-	EventTransferCancelled  EventType = "transfer_cancelled"
-	EventWorkerPoolStalled  EventType = "worker_pool_stalled"
-	EventResearchTriggered  EventType = "research_triggered"
-	EventImportComplete     EventType = "import_complete"
-	EventDiskSpaceLow       EventType = "disk_space_low"
+	EventTransferComplete  EventType = "transfer_complete"
+	EventTransferFailed    EventType = "transfer_failed"
+	EventTransferStuck     EventType = "transfer_stuck"
+	EventTransferCancelled EventType = "transfer_cancelled"
+	EventWorkerPoolStalled EventType = "worker_pool_stalled"
+	EventResearchTriggered EventType = "research_triggered"
+	EventImportComplete    EventType = "import_complete"
+	EventDiskSpaceLow      EventType = "disk_space_low"
 )
 
 // Notifier handles sending notifications
@@ -75,7 +76,12 @@ func (n *Notifier) Send(notif Notification) error {
 
 	req, err := http.NewRequest("POST", url, bytes.NewBufferString(notif.Message))
 	if err != nil {
-		return fmt.Errorf("failed to create request: %w", err)
+		// Request errors may contain topic URLs or credentials.
+		return errors.New("failed to create ntfy request")
+	}
+
+	if n.cfg.NtfyToken != "" {
+		req.Header.Set("Authorization", "Bearer "+n.cfg.NtfyToken)
 	}
 
 	req.Header.Set("Title", notif.Title)
@@ -97,11 +103,9 @@ func (n *Notifier) Send(notif Notification) error {
 
 	resp, err := n.httpClient.Do(req)
 	if err != nil {
-		log.Error("notify").
-			Err(err).
-			Str("title", notif.Title).
-			Msg("Failed to send notification")
-		return err
+		// Transport errors may include URLs/headers. Do not log or return them.
+		log.Error("notify").Msg("Failed to send ntfy notification (transport error)")
+		return errors.New("ntfy transport failed")
 	}
 	defer resp.Body.Close()
 

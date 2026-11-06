@@ -41,17 +41,18 @@ type Config struct {
 	// Notifications
 	NtfyURL   string // ntfy server URL (e.g., https://ntfy.sh)
 	NtfyTopic string // ntfy topic name
+	NtfyToken string // optional ntfy bearer token
 
 	// Auto-cancel stuck transfers
-	AutoCancelStuck     bool          // Enable auto-cancellation of stuck transfers
-	AutoCancelTimeout   time.Duration // How long before auto-cancelling (default: 12h)
-	AutoCancelResearch  bool          // Trigger *arr re-search after cancelling
-	AutoCancelMinRetry  time.Duration // Minimum time between re-search attempts per item
+	AutoCancelStuck    bool          // Enable auto-cancellation of stuck transfers
+	AutoCancelTimeout  time.Duration // How long before auto-cancelling (default: 12h)
+	AutoCancelResearch bool          // Trigger *arr re-search after cancelling
+	AutoCancelMinRetry time.Duration // Minimum time between re-search attempts per item
 
 	// Retry configuration
-	MaxRetries       int           // Maximum retry attempts per file (default: 3)
-	RetryBaseDelay   time.Duration // Base delay for exponential backoff (default: 30s)
-	RetryMaxDelay    time.Duration // Maximum delay between retries (default: 30m)
+	MaxRetries     int           // Maximum retry attempts per file (default: 3)
+	RetryBaseDelay time.Duration // Base delay for exponential backoff (default: 30s)
+	RetryMaxDelay  time.Duration // Maximum delay between retries (default: 30m)
 
 	// Priority configuration
 	PriorityEnabled    bool // Enable priority-based download ordering
@@ -62,17 +63,17 @@ type Config struct {
 // GetDefaults returns a Config with default values filled in
 func GetDefaults() *Config {
 	return &Config{
-		WorkerCount:         4,
-		AutoCancelStuck:     false, // Disabled by default, opt-in
-		AutoCancelTimeout:   12 * time.Hour,
-		AutoCancelResearch:  true,
-		AutoCancelMinRetry:  1 * time.Hour,
-		MaxRetries:          3,
-		RetryBaseDelay:      30 * time.Second,
-		RetryMaxDelay:       30 * time.Minute,
-		PriorityEnabled:     true,
-		SmallFilePriority:   true,
-		SequentialDownload:  true,
+		WorkerCount:        4,
+		AutoCancelStuck:    false, // Disabled by default, opt-in
+		AutoCancelTimeout:  12 * time.Hour,
+		AutoCancelResearch: true,
+		AutoCancelMinRetry: 1 * time.Hour,
+		MaxRetries:         3,
+		RetryBaseDelay:     30 * time.Second,
+		RetryMaxDelay:      30 * time.Minute,
+		PriorityEnabled:    true,
+		SmallFilePriority:  true,
+		SequentialDownload: true,
 	}
 }
 
