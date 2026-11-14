@@ -183,7 +183,14 @@ func (w *Watchdog) cleanupStaleContexts() {
 		startTime := ctx.StartTime
 		lastProgress := ctx.LastProgressTime
 		name := ctx.Name
+		admissionPending := ctx.admissionPendingFiles > 0 || ctx.admissionHeldFiles > 0
+		admissionActive := ctx.admissionActiveFiles > 0
+		admissionStarted := ctx.admissionStartedAt
 		ctx.mu.RUnlock()
+
+		if admissionPending && !admissionActive {
+			return true // retained work is not stalled payload I/O
+		}
 
 		// Only check transfers that are supposed to be downloading
 		if state != TransferLifecycleDownloading {
@@ -194,6 +201,9 @@ func (w *Watchdog) cleanupStaleContexts() {
 		checkTime := lastProgress
 		if checkTime.IsZero() {
 			checkTime = startTime
+		}
+		if admissionStarted.After(checkTime) {
+			checkTime = admissionStarted
 		}
 
 		// If no progress for too long, mark as stale

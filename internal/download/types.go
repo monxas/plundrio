@@ -62,19 +62,23 @@ func (s TransferLifecycleState) String() string {
 
 // TransferContext tracks the complete state of a transfer
 type TransferContext struct {
-	ID               int64
-	Name             string
-	FileID           int64
-	TotalFiles       int32
-	CompletedFiles   int32
-	FailedFiles      int32 // Track number of failed files
-	TotalSize        int64 // Total size of all files in bytes
-	DownloadedSize   int64 // Total downloaded bytes
-	State            TransferLifecycleState
-	Error            error
-	StartTime        time.Time // When the transfer started downloading
-	LastProgressTime time.Time // Last time any progress was made (for watchdog)
-	mu               sync.RWMutex
+	ID                    int64
+	Name                  string
+	FileID                int64
+	TotalFiles            int32
+	CompletedFiles        int32
+	FailedFiles           int32 // Track number of failed files
+	TotalSize             int64 // Total size of all files in bytes
+	DownloadedSize        int64 // Total downloaded bytes
+	State                 TransferLifecycleState
+	Error                 error
+	StartTime             time.Time // When the transfer started downloading
+	LastProgressTime      time.Time // Last time any progress was made (for watchdog)
+	admissionPendingFiles int       // all pending initial/retry files, including channel backlog
+	admissionActiveFiles  int       // files whose payload attempt has actually started
+	admissionHeldFiles    int       // intentional local admission holds, protected by mu
+	admissionStartedAt    time.Time // watchdog clock when payload starts from idle pending state
+	mu                    sync.RWMutex
 }
 
 // TransferSnapshot is a read-only snapshot of transfer state for health monitoring

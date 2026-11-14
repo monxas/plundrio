@@ -25,6 +25,12 @@ func (m *Manager) downloadWorker() {
 				return
 			}
 
+			if !m.waitForDownloadAdmission(job) {
+				m.changeAdmissionPending(job.TransferID, -1)
+				m.activeFiles.Delete(job.FileID)
+				return
+			}
+
 			// Update active downloads metric
 			if m.metrics != nil {
 				m.metrics.SetActiveDownloads(int(m.watchdog.activeDownloads.Load()) + 1)
@@ -36,7 +42,7 @@ func (m *Manager) downloadWorker() {
 				TransferID: job.TransferID,
 				StartTime:  time.Now(),
 			}
-			err := m.downloadWithRetry(state)
+			err := m.downloadAdmittedFile(job, state)
 			if err != nil {
 				if downloadErr, ok := err.(*DownloadError); ok && downloadErr.Type == "DownloadCancelled" {
 					log.Info("download").

@@ -395,6 +395,7 @@ func (p *TransferProcessor) queueTransferFiles(transfer *putio.Transfer, files [
 		if p.shouldDownloadFile(transfer, file) {
 			filesToQueue = append(filesToQueue, file)
 		} else {
+			p.manager.changeAdmissionPending(transfer.ID, -1)
 			// For files we don't need to download (already exist), mark as completed
 			// This ensures our file count tracking is accurate
 			if err := p.manager.coordinator.FileCompleted(transfer.ID); err != nil {

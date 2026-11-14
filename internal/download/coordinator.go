@@ -32,11 +32,12 @@ func (tc *TransferCoordinator) RegisterCleanupHook(hook func(int64) error) {
 // InitiateTransfer starts tracking a new transfer
 func (tc *TransferCoordinator) InitiateTransfer(id int64, name string, fileID int64, totalFiles int) *TransferContext {
 	ctx := &TransferContext{
-		ID:         id,
-		Name:       name,
-		FileID:     fileID,
-		TotalFiles: int32(totalFiles),
-		State:      TransferLifecycleInitial,
+		ID:                    id,
+		Name:                  name,
+		FileID:                fileID,
+		TotalFiles:            int32(totalFiles),
+		admissionPendingFiles: totalFiles,
+		State:                 TransferLifecycleInitial,
 	}
 	tc.transfers.Store(id, ctx)
 

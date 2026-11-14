@@ -158,40 +158,46 @@ func (m *Manager) Start() {
 
 // Stop gracefully shuts down the manager
 func (m *Manager) Stop() {
+	// Release a producer blocked on a full channel before taking its mutex.
+	// Held workers intentionally do not consume more jobs while N1 is unknown.
+	m.stopOnce.Do(func() { close(m.stopChan) })
 	m.mu.Lock()
 	if !m.running {
 		m.mu.Unlock()
 		return
 	}
 	m.running = false
+	// QueueDownload checks stopChan while holding this same mutex. No sender
+	// can enter a send after this close, and blocked senders were released above.
+	close(m.jobs)
 	m.mu.Unlock()
 
-	m.stopOnce.Do(func() {
-		// Signal workers to stop via stopChan
-		close(m.stopChan)
-		// Close jobs channel to prevent new submissions
-		close(m.jobs)
-		// Drain any remaining jobs to prevent deadlock
-		go func() {
-			for range m.jobs {
-				// Drain jobs channel
-			}
-		}()
-	})
+	drained := make(chan struct{})
+	go func() {
+		defer close(drained)
+		for job := range m.jobs {
+			m.changeAdmissionPending(job.TransferID, -1)
+			m.activeFiles.Delete(job.FileID)
+		}
+	}()
 
-	// Stop retry queue
 	m.retryQueue.Stop()
-
-	// Wait for all workers to finish
 	m.workerWg.Wait()
-	// Wait for monitor to finish
 	m.monitorWg.Wait()
+	<-drained
 }
 
 // QueueDownload adds a download job to the queue if not already downloading
 func (m *Manager) QueueDownload(job downloadJob) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
+	select {
+	case <-m.stopChan:
+		m.changeAdmissionPending(job.TransferID, -1)
+		return
+	default:
+	}
 
 	// Check if file is already being downloaded
 	if _, exists := m.activeFiles.Load(job.FileID); exists {
@@ -204,7 +210,8 @@ func (m *Manager) QueueDownload(job downloadJob) {
 	case m.jobs <- job:
 		// Successfully queued
 	case <-m.stopChan:
-		// Manager is shutting down, just remove from active files
+		// Manager is shutting down, release the pending ownership.
+		m.changeAdmissionPending(job.TransferID, -1)
 		m.activeFiles.Delete(job.FileID)
 	}
 }

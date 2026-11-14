@@ -10,25 +10,25 @@ import (
 
 // RetryItem represents an item waiting to be retried
 type RetryItem struct {
-	Job          downloadJob
-	Attempts     int
-	LastAttempt  time.Time
-	NextRetry    time.Time
-	LastError    string
-	index        int // index in the heap
+	Job         downloadJob
+	Attempts    int
+	LastAttempt time.Time
+	NextRetry   time.Time
+	LastError   string
+	index       int // index in the heap
 }
 
 // RetryQueue manages failed downloads with exponential backoff
 type RetryQueue struct {
-	mu           sync.Mutex
-	items        []*RetryItem
-	itemsByID    map[int64]*RetryItem // fileID -> item
-	maxRetries   int
-	baseDelay    time.Duration
-	maxDelay     time.Duration
-	manager      *Manager
-	stopChan     chan struct{}
-	wg           sync.WaitGroup
+	mu         sync.Mutex
+	items      []*RetryItem
+	itemsByID  map[int64]*RetryItem // fileID -> item
+	maxRetries int
+	baseDelay  time.Duration
+	maxDelay   time.Duration
+	manager    *Manager
+	stopChan   chan struct{}
+	wg         sync.WaitGroup
 }
 
 // NewRetryQueue creates a new retry queue
@@ -112,6 +112,7 @@ func (rq *RetryQueue) Add(job downloadJob, err error) bool {
 
 	heap.Push(rq, item)
 	rq.itemsByID[job.FileID] = item
+	rq.manager.changeAdmissionPending(job.TransferID, 1)
 
 	log.Info("retry").
 		Str("file_name", job.Name).
@@ -135,6 +136,7 @@ func (rq *RetryQueue) Remove(fileID int64) {
 func (rq *RetryQueue) removeItem(item *RetryItem) {
 	heap.Remove(rq, item.index)
 	delete(rq.itemsByID, item.Job.FileID)
+	rq.manager.changeAdmissionPending(item.Job.TransferID, -1)
 }
 
 // GetStats returns retry queue statistics
