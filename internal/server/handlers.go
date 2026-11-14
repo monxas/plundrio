@@ -90,8 +90,8 @@ func (s *Server) handleRPC(w http.ResponseWriter, r *http.Request) {
 	case "session-get":
 		result = map[string]interface{}{
 			"download-dir":        s.cfg.TargetDir,
-			"version":             "2.94", // Transmission version to report
-			"rpc-version":         15,     // RPC version to report
+			"version":             "4.0.0 (Plundrio)", // Compatibility level: persistent labels are implemented
+			"rpc-version":         17,                 // Transmission RPC compatibility level including labels
 			"rpc-version-minimum": 1,
 		}
 		log.Debug("rpc").
@@ -156,13 +156,13 @@ type WorkerPoolHealth struct {
 
 // PutioTransfersHealth contains Put.io transfer status
 type PutioTransfersHealth struct {
-	TotalTransfers   int                     `json:"total_transfers"`
-	Downloading      int                     `json:"downloading"`
-	Seeding          int                     `json:"seeding"`
-	Completed        int                     `json:"completed"`
-	Errored          int                     `json:"errored"`
-	StuckCount       int                     `json:"stuck_count"`
-	StuckTransfers   []PutioStuckTransfer    `json:"stuck_transfers,omitempty"`
+	TotalTransfers int                  `json:"total_transfers"`
+	Downloading    int                  `json:"downloading"`
+	Seeding        int                  `json:"seeding"`
+	Completed      int                  `json:"completed"`
+	Errored        int                  `json:"errored"`
+	StuckCount     int                  `json:"stuck_count"`
+	StuckTransfers []PutioStuckTransfer `json:"stuck_transfers,omitempty"`
 }
 
 // PutioStuckTransfer represents a stuck transfer on Put.io
