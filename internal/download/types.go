@@ -63,7 +63,9 @@ func (s TransferLifecycleState) String() string {
 // TransferContext tracks the complete state of a transfer
 type TransferContext struct {
 	ID                    int64
-	Name                  string
+	Name                  string // local root folder (relative to TargetDir)
+	Hash                  string // BitTorrent info-hash, lowercase ("" if unknown)
+	PutioName             string // Put.io's own transfer name
 	FileID                int64
 	TotalFiles            int32
 	CompletedFiles        int32
@@ -85,6 +87,8 @@ type TransferContext struct {
 type TransferSnapshot struct {
 	ID               int64
 	Name             string
+	Hash             string
+	PutioName        string
 	State            TransferLifecycleState
 	TotalFiles       int32
 	CompletedFiles   int32
@@ -102,6 +106,8 @@ func (tc *TransferContext) GetSnapshot() TransferSnapshot {
 	return TransferSnapshot{
 		ID:               tc.ID,
 		Name:             tc.Name,
+		Hash:             tc.Hash,
+		PutioName:        tc.PutioName,
 		State:            tc.State,
 		TotalFiles:       tc.TotalFiles,
 		CompletedFiles:   tc.CompletedFiles,

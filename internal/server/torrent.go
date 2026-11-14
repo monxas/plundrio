@@ -14,6 +14,7 @@ import (
 
 	"github.com/elsbrock/go-putio"
 	"github.com/elsbrock/plundrio/internal/log"
+	"github.com/elsbrock/plundrio/internal/naming"
 )
 
 // maxTorrentBytes caps how much we are willing to read from a .torrent URL.
@@ -167,11 +168,13 @@ func (s *Server) handleTorrentAdd(args json.RawMessage) (interface{}, error) {
 		if err := s.client.UploadFile(torrentData, name, s.cfg.FolderID); err != nil {
 			return nil, fmt.Errorf("failed to upload torrent: %w", err)
 		}
+		infoHash = s.rememberTorrent(torrentData, params.Filename, params.Labels)
 
 		log.Info("rpc").
 			Str("operation", "torrent-add").
 			Str("type", "torrent").
 			Str("name", name).
+			Str("hash", infoHash).
 			Int64("folder_id", s.cfg.FolderID).
 			Msg("Torrent file uploaded")
 	} else if torrentURL := firstHTTPURL(params.Filename, params.MagnetLink); torrentURL != "" {
@@ -192,6 +195,7 @@ func (s *Server) handleTorrentAdd(args json.RawMessage) (interface{}, error) {
 			if infoHash != "" && len(params.Labels) > 0 && s.labels != nil {
 				s.labels.Set(infoHash, params.Labels)
 			}
+			s.rememberName(infoHash, naming.MagnetDisplayName(magnet))
 
 			log.Info("rpc").
 				Str("operation", "torrent-add").
@@ -219,11 +223,15 @@ func (s *Server) handleTorrentAdd(args json.RawMessage) (interface{}, error) {
 		if err := s.client.UploadFile(data, name, s.cfg.FolderID); err != nil {
 			return nil, fmt.Errorf("failed to upload torrent: %w", err)
 		}
+		// Indexers name the file after the release (Content-Disposition), so
+		// it is the best available release identity for this torrent.
+		infoHash = s.rememberTorrent(data, fname, params.Labels)
 
 		log.Info("rpc").
 			Str("operation", "torrent-add").
 			Str("type", "torrent-via-url").
 			Str("name", name).
+			Str("hash", infoHash).
 			Int("bytes", len(data)).
 			Int64("folder_id", s.cfg.FolderID).
 			Msg("Torrent file (fetched from url) uploaded")
@@ -247,6 +255,7 @@ func (s *Server) handleTorrentAdd(args json.RawMessage) (interface{}, error) {
 		if infoHash != "" && len(params.Labels) > 0 && s.labels != nil {
 			s.labels.Set(infoHash, params.Labels)
 		}
+		s.rememberName(infoHash, naming.MagnetDisplayName(name))
 
 		log.Info("rpc").
 			Str("operation", "torrent-add").
@@ -268,10 +277,40 @@ func (s *Server) handleTorrentAdd(args json.RawMessage) (interface{}, error) {
 		}, nil
 	}
 
-	// Return success response
+	// Return success response (with the hash when we could compute it, so
+	// clients can label/track the torrent immediately).
+	added := map[string]interface{}{}
+	if infoHash != "" {
+		added["hashString"] = infoHash
+		added["id"] = infoHash
+	}
 	return map[string]interface{}{
-		"torrent-added": map[string]interface{}{},
+		"torrent-added": added,
 	}, nil
+}
+
+// rememberName records the release name the client asked for (see naming).
+func (s *Server) rememberName(hash, requested string) {
+	if hash == "" || requested == "" {
+		return
+	}
+	s.dlManager.NameStore().Remember(hash, requested)
+}
+
+// rememberTorrent derives the info-hash of an uploaded .torrent so its labels
+// and requested release name are tracked exactly like a magnet's. Returns
+// the lowercase info-hash, or "" if the bytes are not a parseable torrent.
+func (s *Server) rememberTorrent(data []byte, requested string, labels []string) string {
+	hash, _, err := naming.TorrentInfo(data)
+	if err != nil {
+		log.Warn("rpc").Err(err).Msg("Could not derive info-hash from uploaded torrent")
+		return ""
+	}
+	if len(labels) > 0 && s.labels != nil {
+		s.labels.Set(hash, labels)
+	}
+	s.rememberName(hash, requested)
+	return hash
 }
 
 // handleTorrentSet updates torrent properties (labels/categories for OnePacerr).
@@ -483,8 +522,10 @@ func (s *Server) handleTorrentGet(args json.RawMessage) (interface{}, error) {
 
 		torrentInfo := map[string]interface{}{
 			"id":             t.ID,
-			"hashString":     t.Hash,
-			"name":           t.Name,
+			"hashString": t.Hash,
+			// The folder we actually download to, so the client's
+			// outputPath (downloadDir + name) is always what is on disk.
+			"name":           s.dlManager.LocalRoot(t.Name, t.Hash),
 			"eta":            t.EstimatedTime,
 			"status":         status,
 			"downloadDir":    s.cfg.TargetDir,

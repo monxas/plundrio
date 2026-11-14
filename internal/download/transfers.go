@@ -3,11 +3,13 @@ package download
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/elsbrock/go-putio"
 	"github.com/elsbrock/plundrio/internal/log"
+	"github.com/elsbrock/plundrio/internal/naming"
 )
 
 // TransferProcessor handles the processing of Put.io transfers
@@ -446,9 +448,33 @@ func (p *TransferProcessor) queueTransferFiles(transfer *putio.Transfer, files [
 	return filesToDownload
 }
 
+// localRelPath is where a transfer's file lands, relative to the target dir.
+//
+//	historic layout (root == Put.io name):   <putio name>/<file path>
+//	release root, folder transfer:            <requested>/<putio name>/<file path>
+//	release root, single-file transfer:       <requested>/<file name>
+//
+// <file path> keeps the torrent's own sub-folders ("Season 2/01. x.mkv"),
+// and every component is sanitised so nothing can escape the target dir.
+func (p *TransferProcessor) localRelPath(transfer *putio.Transfer, file *putio.File) string {
+	put := naming.SafeComponent(transfer.Name)
+	root := p.manager.LocalRoot(transfer.Name, transfer.Hash)
+	rel := naming.SafeRelPath(file.Name)
+	if rel == "" {
+		rel = "file"
+	}
+	if root == put || put == "" {
+		return filepath.Join(root, filepath.FromSlash(rel))
+	}
+	if file.ID == transfer.FileID {
+		return filepath.Join(root, filepath.FromSlash(rel))
+	}
+	return filepath.Join(root, put, filepath.FromSlash(rel))
+}
+
 // shouldDownloadFile determines if a file needs to be downloaded
 func (p *TransferProcessor) shouldDownloadFile(transfer *putio.Transfer, file *putio.File) bool {
-	targetPath := filepath.Join(p.targetDir, transfer.Name, file.Name)
+	targetPath := filepath.Join(p.targetDir, p.localRelPath(transfer, file))
 	info, err := os.Stat(targetPath)
 
 	// Skip if file exists with correct size
@@ -476,7 +502,7 @@ func (p *TransferProcessor) shouldDownloadFile(transfer *putio.Transfer, file *p
 func (p *TransferProcessor) queueFileDownload(transfer *putio.Transfer, file *putio.File) {
 	p.manager.QueueDownload(downloadJob{
 		FileID:     file.ID,
-		Name:       filepath.Join(transfer.Name, file.Name),
+		Name:       p.localRelPath(transfer, file),
 		TransferID: transfer.ID,
 	})
 	log.Debug("transfers").
@@ -488,7 +514,21 @@ func (p *TransferProcessor) queueFileDownload(transfer *putio.Transfer, file *pu
 
 // initializeTransfer sets up transfer tracking
 func (p *TransferProcessor) initializeTransfer(transfer *putio.Transfer, filesToDownload int) bool {
-	p.manager.coordinator.InitiateTransfer(transfer.ID, transfer.Name, transfer.FileID, filesToDownload)
+	// The context is named after the local root: that is what /health and the
+	// scanner see, and it must equal the folder on disk.
+	root := p.manager.LocalRoot(transfer.Name, transfer.Hash)
+	ctx := p.manager.coordinator.InitiateTransfer(transfer.ID, root, transfer.FileID, filesToDownload)
+	ctx.mu.Lock()
+	ctx.Hash = strings.ToLower(transfer.Hash)
+	ctx.PutioName = transfer.Name
+	ctx.mu.Unlock()
+	if root != transfer.Name {
+		log.Info("transfers").
+			Int64("id", transfer.ID).
+			Str("putio_name", transfer.Name).
+			Str("local_root", root).
+			Msg("Using release-identity local root")
+	}
 	if err := p.manager.coordinator.StartDownload(transfer.ID); err != nil {
 		log.Error("transfers").
 			Str("name", transfer.Name).

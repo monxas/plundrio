@@ -137,7 +137,9 @@ type HealthResponse struct {
 // TransferHealthStatus contains status for a single transfer
 type TransferHealthStatus struct {
 	ID             int64   `json:"id"`
-	Name           string  `json:"name"`
+	Name           string  `json:"name"`                 // local folder under the download dir
+	Hash           string  `json:"hash,omitempty"`       // info-hash = Sonarr/Radarr downloadId
+	PutioName      string  `json:"putio_name,omitempty"` // Put.io's transfer name, if different
 	State          string  `json:"state"`
 	Progress       float64 `json:"progress_percent"`
 	DownloadRate   int64   `json:"download_rate_bytes"`
@@ -213,11 +215,15 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 		status := TransferHealthStatus{
 			ID:             snapshot.ID,
 			Name:           snapshot.Name,
+			Hash:           snapshot.Hash,
 			State:          snapshot.State.String(),
 			Progress:       progress,
 			DownloadRate:   downloadRate,
 			CompletedFiles: snapshot.CompletedFiles,
 			TotalFiles:     snapshot.TotalFiles,
+		}
+		if snapshot.PutioName != snapshot.Name {
+			status.PutioName = snapshot.PutioName
 		}
 
 		response.Transfers = append(response.Transfers, status)

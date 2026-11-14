@@ -64,9 +64,10 @@ func SafeComponent(name string) string {
 			b.WriteRune(r)
 		}
 	}
-	s := strings.Join(strings.Fields(b.String()), " ")
-	s = strings.Trim(s, " .")
-	if s == "" || s == "." || s == ".." {
+	// Internal whitespace is preserved on purpose: real file names such as
+	// "13.  The Stan Who Came To Dinner.mkv" must land on disk unchanged.
+	s := strings.TrimSpace(b.String())
+	if s == "" || strings.Trim(s, ".") == "" {
 		return ""
 	}
 	if len(s) > MaxComponentBytes {
@@ -74,7 +75,7 @@ func SafeComponent(name string) string {
 		for cut > 0 && !utf8.RuneStart(s[cut]) {
 			cut--
 		}
-		s = strings.TrimRight(s[:cut], " .")
+		s = strings.TrimSpace(s[:cut])
 	}
 	return s
 }

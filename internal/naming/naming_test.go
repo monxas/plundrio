@@ -18,8 +18,8 @@ func TestMagnetDisplayName(t *testing.T) {
 	cases := map[string]string{
 		goldenS02: "The Golden Girls S02 DVDrip",
 		"magnet:?xt=urn:btih:E91ADF0C5EC1AE96781F1438DA21C6F48D274AB1&dn=The+Golden+Girls+1985+S03+DVDRip+x264+%5Bi_c%5D": "The Golden Girls 1985 S03 DVDRip x264 [i_c]",
-		"magnet:?xt=urn:btih:abc":                        "",
-		"magnet:?dn=..%2F..%2Fetc%2Fpasswd&xt=urn:btih:a": "etc passwd",
+		"magnet:?xt=urn:btih:abc":                         "",
+		"magnet:?dn=..%2F..%2Fetc%2Fpasswd&xt=urn:btih:a": ".. .. etc passwd",
 		"magnet:?dn=bad%zzvalue&xt=urn:btih:a":            "",
 		"https://example.com/x.torrent":                   "",
 	}
@@ -47,13 +47,17 @@ func TestLocalRoot(t *testing.T) {
 		{"Disc 2", "", "Disc 2 [255ab56c]"},
 		{"Extras", "", "Extras [255ab56c]"},
 		// Hostile names never escape the download root.
-		{"../../etc", "", "etc"},
+		{"../../etc", "", ".. .. etc"},
 		{"", "", "transfer"},
 		{"x", "unknown.torrent", "x"},
 	}
 	for _, c := range cases {
-		if got := LocalRoot(c.putio, c.req, h); got != c.want {
+		got := LocalRoot(c.putio, c.req, h)
+		if got != c.want {
 			t.Errorf("LocalRoot(%q, %q) = %q, want %q", c.putio, c.req, got, c.want)
+		}
+		if strings.ContainsAny(got, `/\`) || got == "." || got == ".." {
+			t.Errorf("LocalRoot(%q, %q) = %q is not a single safe component", c.putio, c.req, got)
 		}
 	}
 }
@@ -74,8 +78,11 @@ func TestIsGeneric(t *testing.T) {
 }
 
 func TestSafeComponentAndRelPath(t *testing.T) {
-	if got := SafeComponent("a/b\\c\x00d\te"); got != "a b c de" && got != "a b cde" {
+	if got := SafeComponent("a/b\\c\x00d\te"); got != "a b cde" {
 		t.Errorf("SafeComponent = %q", got)
+	}
+	if got := SafeComponent("13.  The Stan Who Came To Dinner.mkv"); got != "13.  The Stan Who Came To Dinner.mkv" {
+		t.Errorf("SafeComponent changed a real file name: %q", got)
 	}
 	if got := SafeComponent(".."); got != "" {
 		t.Errorf("SafeComponent(..) = %q", got)

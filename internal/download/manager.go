@@ -7,6 +7,7 @@ import (
 	"github.com/elsbrock/plundrio/internal/config"
 	"github.com/elsbrock/plundrio/internal/log"
 	"github.com/elsbrock/plundrio/internal/metrics"
+	"github.com/elsbrock/plundrio/internal/naming"
 )
 
 // Manager handles downloading completed transfers from Put.io.
@@ -35,6 +36,26 @@ type Manager struct {
 	watchdog   *Watchdog          // Monitors system health
 	retryQueue *RetryQueue        // Manages failed download retries
 	metrics    *metrics.Metrics   // Prometheus metrics
+
+	// names maps info-hash -> the release name the client asked for, so the
+	// local folder keeps the release identity even when Put.io renames the
+	// transfer to a generic torrent root such as "Season 2". Set it with
+	// SetNameStore before Start; nil behaves as an empty store.
+	names *naming.Store
+}
+
+// SetNameStore installs the shared requested-name store. Call before Start so
+// every transfer is laid out consistently from its first file.
+func (m *Manager) SetNameStore(s *naming.Store) { m.names = s }
+
+// NameStore returns the shared requested-name store (may be nil).
+func (m *Manager) NameStore() *naming.Store { return m.names }
+
+// LocalRoot is the top-level folder (relative to TargetDir) for a transfer.
+// The RPC layer reports the same name to Sonarr/Radarr, so their outputPath
+// always points at what is actually on disk.
+func (m *Manager) LocalRoot(putioName, hash string) string {
+	return m.names.Root(putioName, hash)
 }
 
 // GetTransferProcessor returns the manager's transfer processor

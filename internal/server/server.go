@@ -25,14 +25,18 @@ type Server struct {
 	labels       *LabelStore
 }
 
+// StateDir is where small persistent state (labels, requested names) lives:
+// /config when mounted (docker layout), else the target dir.
+func StateDir(cfg *config.Config) string {
+	if st, err := os.Stat("/config"); err == nil && st.IsDir() {
+		return "/config"
+	}
+	return cfg.TargetDir
+}
+
 // New creates a new RPC server
 func New(cfg *config.Config, client *api.Client, dlManager *download.Manager) *Server {
-	// Persist labels under target dir (mounted /config or /downloads parent).
-	// Prefer /config if present (docker layout), else TargetDir.
-	labelDir := "/config"
-	if st, err := os.Stat(labelDir); err != nil || !st.IsDir() {
-		labelDir = cfg.TargetDir
-	}
+	labelDir := StateDir(cfg)
 	return &Server{
 		cfg:         cfg,
 		client:      client,
