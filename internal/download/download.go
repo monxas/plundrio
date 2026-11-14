@@ -308,15 +308,17 @@ func (m *Manager) downloadFile(state *DownloadState) error {
 
 		// Update transfer context with the completed file size
 		if transferCtx, exists := m.coordinator.GetTransferContext(state.TransferID); exists {
-			// Update downloaded size
-			transferCtx.DownloadedSize += totalSize
+			// Credit the file's final size; only bytes not yet counted by
+			// progress ticks are added (see TransferContext.CreditFile).
+			transferCtx.CreditFile(state.FileID, totalSize)
+			snap := transferCtx.GetSnapshot()
 
 			log.Debug("download").
 				Str("file_name", state.Name).
 				Int64("transfer_id", state.TransferID).
 				Int64("file_size", totalSize).
-				Int64("transfer_downloaded", transferCtx.DownloadedSize).
-				Int64("transfer_total", transferCtx.TotalSize).
+				Int64("transfer_downloaded", snap.DownloadedSize).
+				Int64("transfer_total", snap.TotalSize).
 				Msg("Updated transfer with completed file size")
 		}
 

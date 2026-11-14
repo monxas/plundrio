@@ -2,6 +2,7 @@ package download
 
 import (
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/elsbrock/go-putio"
@@ -70,7 +71,22 @@ func TestLocalRelPathKeepsSubfoldersAndStaysInside(t *testing.T) {
 		t.Fatalf("season folders were flattened into %q", s1)
 	}
 	evil := p.localRelPath(tr, &putio.File{ID: 4, Name: "../../../etc/passwd"})
-	if rel, err := filepath.Rel("/downloads", filepath.Join("/downloads", evil)); err != nil || filepath.IsAbs(rel) || rel == ".." || len(rel) >= 2 && rel[:3] == "../" {
+	if rel, err := filepath.Rel("/downloads", filepath.Join("/downloads", evil)); err != nil || rel == ".." || strings.HasPrefix(rel, "../") {
 		t.Fatalf("path escapes the download dir: %q", evil)
+	}
+}
+
+func TestCreditFileNeverDoubleCounts(t *testing.T) {
+	ctx := &TransferContext{TotalSize: 300}
+	// progress ticks (absolute), then completion with the full size
+	ctx.CreditFile(1, 40)
+	ctx.CreditFile(1, 90)
+	ctx.CreditFile(1, 100)
+	ctx.CreditFile(1, 100)
+	// a resumed retry reports from zero again: nothing is added
+	ctx.CreditFile(1, 10)
+	ctx.CreditFile(2, 200)
+	if s := ctx.GetSnapshot(); s.DownloadedSize != 300 {
+		t.Fatalf("DownloadedSize = %d, want 300 (= TotalSize)", s.DownloadedSize)
 	}
 }

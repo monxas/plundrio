@@ -409,9 +409,7 @@ func (p *TransferProcessor) queueTransferFiles(transfer *putio.Transfer, files [
 			}
 
 			// For existing files, add their size to the downloaded size
-			ctx.mu.Lock()
-			ctx.DownloadedSize += file.Size
-			ctx.mu.Unlock()
+			ctx.CreditFile(file.ID, file.Size)
 
 			log.Debug("transfers").
 				Int64("transfer_id", transfer.ID).
