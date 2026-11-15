@@ -5,7 +5,7 @@ import argparse,datetime,fcntl,hashlib,json,os,pathlib,re,resource,shutil,subpro
 def sha(path):return hashlib.sha256(pathlib.Path(path).read_bytes()).hexdigest()
 def run(argv,timeout=30,**kwargs):
  r=subprocess.run(argv,capture_output=True,timeout=timeout,**kwargs)
- if r.returncode:raise RuntimeError('Command failed: '+argv[0]+' (see private build log when present)')
+ if r.returncode:raise RuntimeError('Command failed: '+argv[0]+': '+r.stderr.decode(errors='replace')[-1000:])
  return r.stdout
 
 def git(source,*args):
@@ -15,13 +15,14 @@ def fsync_dir(path):
  try:os.fsync(fd)
  finally:os.close(fd)
 def limits():
- for key,value in [(resource.RLIMIT_AS,512*2**20),(resource.RLIMIT_DATA,128*2**20),(resource.RLIMIT_CPU,15),(resource.RLIMIT_FSIZE,4*2**20)]:resource.setrlimit(key,(value,value))
+ for key,value in [(resource.RLIMIT_AS,1024*2**20),(resource.RLIMIT_DATA,256*2**20),(resource.RLIMIT_CPU,15),(resource.RLIMIT_FSIZE,4*2**20)]:resource.setrlimit(key,(value,value))
  os.nice(10)
 def fixtures(binary):
  assert pathlib.Path('/usr/bin/ffprobe').is_file(),'Install ffprobe before accepting the exported helper'
  with tempfile.TemporaryDirectory(prefix='media-validator-fixtures-')as d:
   root=pathlib.Path(d);p=root/'healthy.mp4'
-  run(['/usr/bin/ffmpeg','-nostdin','-v','error','-f','lavfi','-i','color=c=blue:s=64x64:r=10','-t','3','-threads','1','-c:v','mpeg4','-pix_fmt','yuv420p',str(p)],timeout=20,preexec_fn=limits,env={'PATH':'/usr/bin:/bin','LC_ALL':'C'})
+  (root/'fixture.rgb').write_bytes(bytes([0,0,255])*64*64*30)
+  run(['/usr/bin/ffmpeg','-nostdin','-v','error','-f','rawvideo','-pixel_format','rgb24','-video_size','64x64','-framerate','10','-i',str(root/'fixture.rgb'),'-frames:v','30','-filter_threads','1','-filter_complex_threads','1','-threads','1','-c:v','mpeg4','-pix_fmt','yuv420p',str(p)],timeout=20,preexec_fn=limits,env={'PATH':'/usr/bin:/bin','LC_ALL':'C','OMP_NUM_THREADS':'1','OPENBLAS_NUM_THREADS':'1'})
   b=p.read_bytes();(root/'renamed.txt').write_bytes(b);(root/'truncated.mp4').write_bytes(b[:len(b)//2]);(root/'archive.mp4').write_bytes(b'PK\x03\x04'+b'\x00'*32)
   results=[]
   for name,code,status in [('healthy.mp4',0,'accepted'),('healthy.mp4',0,'accepted'),('renamed.txt',0,'accepted'),('truncated.mp4',2,'rejected'),('truncated.mp4',2,'rejected'),('archive.mp4',3,'pending')]:
