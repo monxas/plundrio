@@ -183,12 +183,13 @@ func (w *Watchdog) cleanupStaleContexts() {
 		startTime := ctx.StartTime
 		lastProgress := ctx.LastProgressTime
 		name := ctx.Name
+		validationActive := ctx.validationActive > 0
 		admissionPending := ctx.admissionPendingFiles > 0 || ctx.admissionHeldFiles > 0
 		admissionActive := ctx.admissionActiveFiles > 0
 		admissionStarted := ctx.admissionStartedAt
 		ctx.mu.RUnlock()
 
-		if admissionPending && !admissionActive {
+		if validationActive || (admissionPending && !admissionActive) {
 			return true // retained work is not stalled payload I/O
 		}
 

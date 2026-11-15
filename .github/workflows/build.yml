@@ -25,3 +25,17 @@ jobs:
       - uses: DeterminateSystems/flake-checker-action@main
       - name: Build ${{ matrix.pkg }}
         run: nix build .#${{ matrix.pkg }}
+
+  media-admission:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Install local fixture tools
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      - name: Check durable admission and publication gates
+        run: go test -race ./internal/mediavalidation ./internal/download ./internal/server ./cmd/plundrio

@@ -222,21 +222,15 @@ func (tc *TransferCoordinator) CompleteTransfer(transferID int64) error {
 		return fmt.Errorf("invalid state transition: %s -> Completed", ctx.State)
 	}
 
-	// Make sure it's marked as completed (might already be)
-	ctx.State = TransferLifecycleCompleted
-
-	// Double-check that all files are actually completed
-	if ctx.CompletedFiles+ctx.FailedFiles < ctx.TotalFiles {
-		log.Warn("transfer").
-			Int64("id", transferID).
-			Str("name", ctx.Name).
-			Int32("completed", ctx.CompletedFiles).
-			Int32("failed", ctx.FailedFiles).
-			Int32("total", ctx.TotalFiles).
-			Msg("Attempting to complete transfer before all files are done")
-		return fmt.Errorf("cannot complete transfer: %d/%d files still pending",
-			ctx.TotalFiles-(ctx.CompletedFiles+ctx.FailedFiles), ctx.TotalFiles)
+	if ctx.FailedFiles > 0 || ctx.CompletedFiles != ctx.TotalFiles {
+		return fmt.Errorf("cannot complete transfer with failed or pending files")
 	}
+	if tc.manager.validation != nil {
+		if err := tc.manager.validation.Complete(transferID); err != nil {
+			return err
+		}
+	}
+	ctx.State = TransferLifecycleCompleted
 
 	log.Info("transfer").
 		Int64("id", transferID).

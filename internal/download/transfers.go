@@ -275,6 +275,9 @@ func (p *TransferProcessor) processReadyTransfers() {
 
 // isTransferBeingProcessed checks if a transfer is already being handled
 func (p *TransferProcessor) isTransferBeingProcessed(transferID int64) bool {
+	if p.manager.validation != nil && (p.manager.validation.Ready(transferID) || p.manager.validation.NativeRecorded(transferID) != "") {
+		return true
+	}
 	if _, exists := p.manager.coordinator.GetTransferContext(transferID); exists {
 		log.Debug("transfers").
 			Int64("transfer_id", transferID).
@@ -343,6 +346,9 @@ func (p *TransferProcessor) processTransfer(transfer *putio.Transfer) {
 // handleTransferError processes transfer errors appropriately
 func (p *TransferProcessor) handleTransferError(transfer *putio.Transfer, err error) {
 	if putioErr, ok := err.(*putio.ErrorResponse); ok && putioErr.Type == "NotFound" {
+		if p.manager.validation != nil {
+			return
+		}
 		log.Debug("transfers").
 			Str("name", transfer.Name).
 			Int64("id", transfer.ID).
@@ -394,10 +400,21 @@ func (p *TransferProcessor) queueTransferFiles(transfer *putio.Transfer, files [
 	// Collect files that need downloading
 	var filesToQueue []*putio.File
 	for _, file := range files {
+		localFile := filepath.Join(p.targetDir, p.localRelPath(transfer, file))
+		if p.manager.validation != nil && p.manager.validation.Rejected(localFile) {
+			_ = p.manager.validateLocalFile(transfer.ID, file.ID, localFile)
+			p.manager.changeAdmissionPending(transfer.ID, -1)
+			_ = p.manager.coordinator.FileFailure(transfer.ID)
+			continue
+		}
 		if p.shouldDownloadFile(transfer, file) {
 			filesToQueue = append(filesToQueue, file)
 		} else {
 			p.manager.changeAdmissionPending(transfer.ID, -1)
+			if err := p.manager.validateLocalFile(transfer.ID, file.ID, localFile); err != nil {
+				_ = p.manager.coordinator.FileFailure(transfer.ID)
+				continue
+			}
 			// For files we don't need to download (already exist), mark as completed
 			// This ensures our file count tracking is accurate
 			if err := p.manager.coordinator.FileCompleted(transfer.ID); err != nil {
@@ -537,6 +554,12 @@ func (p *TransferProcessor) initializeTransfer(transfer *putio.Transfer, filesTo
 		return false
 	}
 
+	if p.manager.validation != nil {
+		if err := p.manager.validation.Start(transfer.ID, filesToDownload); err != nil {
+			p.manager.coordinator.FailTransfer(transfer.ID, err)
+			return false
+		}
+	}
 	if filesToDownload > 0 {
 		log.Info("transfers").
 			Str("name", transfer.Name).
@@ -551,6 +574,9 @@ func (p *TransferProcessor) processErroredTransfers() {
 	const maxRetryAttempts = 3 // Maximum number of retry attempts
 
 	for _, transfer := range p.transfers["ERROR"] {
+		if p.manager.validation != nil && p.manager.validation.NativeRecorded(transfer.ID) != "" {
+			continue
+		}
 		// Get current retry count
 		retryCountValue, exists := p.retryAttempts.Load(transfer.ID)
 		retryCount := 0

@@ -26,6 +26,10 @@ type Config struct {
 	// Only sensible on trusted local networks; defaults to false.
 	DisableSessionAuth bool
 
+	// MediaValidationEnabled holds video files until structural validation succeeds.
+	MediaValidationEnabled  bool
+	MediaValidationStateDir string
+
 	// Sonarr integration
 	SonarrURL    string
 	SonarrAPIKey string
@@ -63,17 +67,18 @@ type Config struct {
 // GetDefaults returns a Config with default values filled in
 func GetDefaults() *Config {
 	return &Config{
-		WorkerCount:        4,
-		AutoCancelStuck:    false, // Disabled by default, opt-in
-		AutoCancelTimeout:  12 * time.Hour,
-		AutoCancelResearch: true,
-		AutoCancelMinRetry: 1 * time.Hour,
-		MaxRetries:         3,
-		RetryBaseDelay:     30 * time.Second,
-		RetryMaxDelay:      30 * time.Minute,
-		PriorityEnabled:    true,
-		SmallFilePriority:  true,
-		SequentialDownload: true,
+		WorkerCount:             4,
+		MediaValidationStateDir: "/config/media-validation",
+		AutoCancelStuck:         false, // Disabled by default, opt-in
+		AutoCancelTimeout:       12 * time.Hour,
+		AutoCancelResearch:      true,
+		AutoCancelMinRetry:      1 * time.Hour,
+		MaxRetries:              3,
+		RetryBaseDelay:          30 * time.Second,
+		RetryMaxDelay:           30 * time.Minute,
+		PriorityEnabled:         true,
+		SmallFilePriority:       true,
+		SequentialDownload:      true,
 	}
 }
 
