@@ -63,13 +63,16 @@ func (s TransferLifecycleState) String() string {
 // TransferContext tracks the complete state of a transfer
 type TransferContext struct {
 	ID                    int64
-	Name                  string
+	Name                  string // local root folder (relative to TargetDir)
+	Hash                  string // BitTorrent info-hash, lowercase ("" if unknown)
+	PutioName             string // Put.io's own transfer name
 	FileID                int64
 	TotalFiles            int32
 	CompletedFiles        int32
-	FailedFiles           int32 // Track number of failed files
-	TotalSize             int64 // Total size of all files in bytes
-	DownloadedSize        int64 // Total downloaded bytes
+	FailedFiles           int32           // Track number of failed files
+	TotalSize             int64           // Total size of all files in bytes
+	DownloadedSize        int64           // Total downloaded bytes (maintained by CreditFile)
+	creditedBytes         map[int64]int64 // fileID -> bytes already counted, protected by mu
 	State                 TransferLifecycleState
 	Error                 error
 	StartTime             time.Time // When the transfer started downloading
@@ -85,6 +88,8 @@ type TransferContext struct {
 type TransferSnapshot struct {
 	ID               int64
 	Name             string
+	Hash             string
+	PutioName        string
 	State            TransferLifecycleState
 	TotalFiles       int32
 	CompletedFiles   int32
@@ -95,6 +100,30 @@ type TransferSnapshot struct {
 	LastProgressTime time.Time
 }
 
+// CreditFile records that fileID now has `bytes` bytes on disk (an absolute
+// value, not a delta) and adds only the increase to DownloadedSize.
+//
+// Progress ticks, the completion handler, resumed retries and the
+// "already exists" path all report absolute sizes, so crediting is
+// idempotent: a file can never be counted twice. (Before, every completed
+// file was added once by progress deltas and again in full on completion,
+// so a 2.2 GB pack reported 3.7 GB downloaded.)
+func (tc *TransferContext) CreditFile(fileID, bytes int64) int64 {
+	tc.mu.Lock()
+	defer tc.mu.Unlock()
+	if tc.creditedBytes == nil {
+		tc.creditedBytes = make(map[int64]int64)
+	}
+	delta := bytes - tc.creditedBytes[fileID]
+	if delta <= 0 {
+		return 0
+	}
+	tc.creditedBytes[fileID] = bytes
+	tc.DownloadedSize += delta
+	tc.LastProgressTime = time.Now()
+	return delta
+}
+
 // GetSnapshot returns a thread-safe snapshot of the transfer state
 func (tc *TransferContext) GetSnapshot() TransferSnapshot {
 	tc.mu.RLock()
@@ -102,6 +131,8 @@ func (tc *TransferContext) GetSnapshot() TransferSnapshot {
 	return TransferSnapshot{
 		ID:               tc.ID,
 		Name:             tc.Name,
+		Hash:             tc.Hash,
+		PutioName:        tc.PutioName,
 		State:            tc.State,
 		TotalFiles:       tc.TotalFiles,
 		CompletedFiles:   tc.CompletedFiles,

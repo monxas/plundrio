@@ -2,6 +2,7 @@ package download
 
 import (
 	"container/heap"
+	"path"
 	"regexp"
 	"sort"
 	"strconv"
@@ -268,7 +269,7 @@ func SortPutioFiles(files []*putio.File, smallFilesFirst, sequential bool) []*pu
 			index:    i,
 			name:     f.Name,
 			size:     f.Size,
-			seqNum:   extractSequenceNumber(f.Name),
+			seqNum:   extractSequenceNumber(path.Base(f.Name)), // Name may be "Season 2/01. x.mkv"
 			priority: GetFilePriority(f.Name),
 		}
 	}

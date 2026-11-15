@@ -169,29 +169,45 @@ func (c *Client) GetAllTransferFiles(fileID int64) ([]*putio.File, error) {
 		return []*putio.File{&file}, nil
 	}
 
-	// Otherwise, recursively get all files in the directory
+	// Otherwise, recursively get all files in the directory.
+	//
+	// Each returned file's Name is its path relative to the transfer folder
+	// ("Season 2/01. Title.mkv"), not just its base name. Flattening used to
+	// collapse "Season 1/01.mkv" and "Season 2/01.mkv" of a complete-series
+	// pack into one local file (the second was skipped as "already exists"
+	// or overwrote the first) and threw away the season folder that importers
+	// rely on. The returned values are copies; Put.io's objects are untouched.
 	var allFiles []*putio.File
-	var getFiles func(id int64) error
+	var getFiles func(id int64, prefix string, depth int) error
 
-	getFiles = func(id int64) error {
+	getFiles = func(id int64, prefix string, depth int) error {
+		if depth > 32 {
+			return fmt.Errorf("transfer folder %d nested too deeply", fileID)
+		}
 		files, err := c.GetFiles(id)
 		if err != nil {
 			return err
 		}
 
 		for _, file := range files {
+			rel := file.Name
+			if prefix != "" {
+				rel = prefix + "/" + file.Name
+			}
 			if file.IsDir() {
-				if err := getFiles(file.ID); err != nil {
+				if err := getFiles(file.ID, rel, depth+1); err != nil {
 					return err
 				}
 			} else {
-				allFiles = append(allFiles, file)
+				f := *file
+				f.Name = rel
+				allFiles = append(allFiles, &f)
 			}
 		}
 		return nil
 	}
 
-	if err := getFiles(fileID); err != nil {
+	if err := getFiles(fileID, "", 0); err != nil {
 		return nil, err
 	}
 

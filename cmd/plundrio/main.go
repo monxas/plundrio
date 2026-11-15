@@ -14,6 +14,7 @@ import (
 	"github.com/elsbrock/plundrio/internal/config"
 	"github.com/elsbrock/plundrio/internal/download"
 	"github.com/elsbrock/plundrio/internal/log"
+	"github.com/elsbrock/plundrio/internal/naming"
 	"github.com/elsbrock/plundrio/internal/server"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -246,8 +247,11 @@ var runCmd = &cobra.Command{
 			Int64("folder_id", folderID).
 			Msg("Using Put.io folder")
 
-		// Initialize download manager
+		// Initialize download manager. The requested-name store is installed
+		// before Start so every transfer gets its final local folder from the
+		// very first file (see internal/naming).
 		dlManager := download.New(cfg, client)
+		dlManager.SetNameStore(naming.NewStore(server.StateDir(cfg)))
 		dlManager.Start()
 		defer dlManager.Stop()
 		log.Info("manager").
