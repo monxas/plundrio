@@ -33,3 +33,31 @@ an old Processed label.
 ./cmd/plundrio` exercises generated healthy/truncated fixtures, renamed videos,
 archive signatures, identity changes, restart/no-retry, legacy resolutions and
 RPC completion gates without providers or production downloads.
+
+## Reusable scanner build context
+
+The `media-validator` Docker target exports `/media-validate` from the same source
+commit as Plundrio, with a pinned Go SDK. The default runtime image also contains
+the CLI and runs as UID/GID1000. It includes ffprobe; the scratch export is a build
+context only.
+
+On the Linux Docker host, use the versioned helper rather than copying a binary
+between releases:
+
+```sh
+python3 scripts/build-media-validator.py plan --commit <full-clean-commit> --output-root /home/monxas/.local/share/homelab-build-contexts/media-validator
+python3 scripts/build-media-validator.py build --commit <full-clean-commit> --output-root /home/monxas/.local/share/homelab-build-contexts/media-validator
+```
+
+Both commands require the exact clean checkout and return JSON. Build exports to
+an immutable commit/platform/SDK directory outside Git, verifies real generated
+healthy/truncated/renamed/archive fixtures and restart caching, and records the
+source commit, SDK digest, build flags, recipe/script/module hashes and binary
+SHA256 in `manifest.json`. Reuse verifies the manifest and binary; a mismatch
+fails instead of overwriting an accepted artifact. It never deploys applications.
+
+The returned `additional_contexts.mediavalidator` directory is the scanner build
+input. The unified updater must build/accept the helper for the planned Go commit
+before building the scanner, pass that exact directory, and retain its manifest
+hash in the update plan. A new commit or SDK produces a new artifact directory.
+Keep previous active contexts while their images/receipts still reference them.

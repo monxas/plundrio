@@ -39,3 +39,6 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y ffmpeg
       - name: Check durable admission and publication gates
         run: go test -race ./internal/mediavalidation ./internal/download ./internal/server ./cmd/plundrio
+
+      - name: Export and accept the immutable shared validator context
+        run: python3 scripts/build-media-validator.py build --commit "$(git rev-parse HEAD)" --output-root "$RUNNER_TEMP/media-validator-contexts"

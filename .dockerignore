@@ -1,0 +1,11 @@
+.git
+.github
+.env
+.env.*
+*.sops.yaml
+*.pem
+*.key
+bin
+.build
+.cache
+__pycache__
