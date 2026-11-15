@@ -39,3 +39,11 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y ffmpeg
       - name: Check durable admission and publication gates
         run: go test -race ./internal/mediavalidation ./internal/download ./internal/server ./cmd/plundrio
+
+      - name: Export and accept the immutable shared validator context
+        run: python3 scripts/build-media-validator.py build --commit "$(git rev-parse HEAD)" --output-root "$RUNNER_TEMP/media-validator-contexts"
+      - name: Check the default runtime keeps rootless media tooling
+        run: |
+          docker build --build-arg SOURCE_REVISION="$(git rev-parse HEAD)" -t plundrio:producer-check .
+          docker run --rm --network none --read-only --entrypoint /bin/sh plundrio:producer-check -c 'test "$(id -u)" = 1000 && test -x /usr/bin/ffprobe && test -x /usr/local/bin/media-validate'
+          docker run --rm --network none --read-only --entrypoint /app/plundrio plundrio:producer-check --version
