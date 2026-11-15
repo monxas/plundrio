@@ -20,7 +20,7 @@ RUN CGO_ENABLED=0 GOOS=linux go build -buildvcs=false -ldflags="-s -w" -o plundr
 FROM alpine:latest
 
 # Add ca-certificates for HTTPS
-RUN apk add --no-cache ca-certificates tzdata
+RUN apk add --no-cache ca-certificates tzdata ffmpeg
 
 WORKDIR /app
 

@@ -77,6 +77,7 @@ type TransferContext struct {
 	Error                 error
 	StartTime             time.Time // When the transfer started downloading
 	LastProgressTime      time.Time // Last time any progress was made (for watchdog)
+	validationActive      int       // bounded probes are retained local work, not stalled network IO
 	admissionPendingFiles int       // all pending initial/retry files, including channel backlog
 	admissionActiveFiles  int       // files whose payload attempt has actually started
 	admissionHeldFiles    int       // intentional local admission holds, protected by mu

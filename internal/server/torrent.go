@@ -388,6 +388,9 @@ func (s *Server) handleTorrentGet(args json.RawMessage) (interface{}, error) {
 	// Convert Put.io transfers to transmission format
 	torrents := make([]map[string]interface{}, 0, len(transfers))
 	for _, t := range transfers {
+		if s.dlManager.MediaSuperseded(t.ID) {
+			continue
+		}
 		// Filter by IDs if specified (case-insensitive hash match)
 		if len(params.IDs) > 0 {
 			found := false
@@ -506,6 +509,8 @@ func (s *Server) handleTorrentGet(args json.RawMessage) (interface{}, error) {
 				Msg("Calculated progress for transfer without context")
 		}
 
+		status, percentDone, leftUntilDone, validationReason := s.gateMediaCompletion(t.ID, status, percentDone, leftUntilDone)
+
 		labels := []string{}
 		if s.labels != nil {
 			labels = s.labels.Get(t.Hash)
@@ -521,40 +526,45 @@ func (s *Server) handleTorrentGet(args json.RawMessage) (interface{}, error) {
 		}
 
 		torrentInfo := map[string]interface{}{
-			"id":             t.ID,
+			"id":         t.ID,
 			"hashString": t.Hash,
 			// The folder we actually download to, so the client's
 			// outputPath (downloadDir + name) is always what is on disk.
-			"name":           s.dlManager.LocalRoot(t.Name, t.Hash),
-			"eta":            t.EstimatedTime,
-			"status":         status,
-			"downloadDir":    s.cfg.TargetDir,
-			"totalSize":      t.Size,
-			"sizeWhenDone":   t.Size,
-			"leftUntilDone":  leftUntilDone,
-			"uploadedEver":   t.Uploaded,
-			"downloadedEver": t.Downloaded,
-			"percentDone":    percentDone,
-			"rateDownload":   t.DownloadSpeed,
-			"rateUpload":     t.UploadSpeed,
-			"labels":         labels,
-			"addedDate":      addedDate,
-			"doneDate":       doneDate,
-			"activityDate":   nowUnix,
-			"queuePosition":  0,
-			"peersConnected": 0,
-			"peersSendingToUs": 0,
+			"name":               s.dlManager.LocalRoot(t.Name, t.Hash),
+			"eta":                t.EstimatedTime,
+			"status":             status,
+			"downloadDir":        s.cfg.TargetDir,
+			"totalSize":          t.Size,
+			"sizeWhenDone":       t.Size,
+			"leftUntilDone":      leftUntilDone,
+			"uploadedEver":       t.Uploaded,
+			"downloadedEver":     t.Downloaded,
+			"percentDone":        percentDone,
+			"rateDownload":       t.DownloadSpeed,
+			"rateUpload":         t.UploadSpeed,
+			"labels":             labels,
+			"addedDate":          addedDate,
+			"doneDate":           doneDate,
+			"activityDate":       nowUnix,
+			"queuePosition":      0,
+			"peersConnected":     0,
+			"peersSendingToUs":   0,
 			"peersGettingFromUs": 0,
-			"isFinished":     percentDone >= 1.0,
-			"isStalled":      false,
+			"isFinished":         percentDone >= 1.0,
+			"isStalled":          false,
 			"uploadRatio": func() float64 {
 				if t.Size > 0 {
 					return float64(t.Uploaded) / float64(t.Size)
 				}
 				return 0
 			}(),
-			"error":       t.ErrorMessage != "",
-			"errorString": t.ErrorMessage,
+			"error": validationReason != "" || t.ErrorMessage != "",
+			"errorString": func() string {
+				if validationReason != "" {
+					return validationReason
+				}
+				return t.ErrorMessage
+			}(),
 			// Empty arrays so clients iterating fields don't NPE
 			"files":     []interface{}{},
 			"fileStats": []interface{}{},
@@ -649,4 +659,13 @@ func (s *Server) handleTorrentRemove(args json.RawMessage) (interface{}, error) 
 	}
 
 	return struct{}{}, nil
+}
+
+// gateMediaCompletion is the single publication boundary used by torrent-get.
+// It reads only durable local state and never probes or fetches a payload.
+func (s *Server) gateMediaCompletion(id int64, status int, progress float64, left int64) (int, float64, int64, string) {
+	if !s.dlManager.MediaReady(id) && (status == 6 || progress >= 1.0) {
+		return 4, 0.99, 1, "Local media validation pending or rejected; file retained"
+	}
+	return status, progress, left, ""
 }

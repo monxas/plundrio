@@ -123,19 +123,21 @@ func (s *Server) handleRPC(w http.ResponseWriter, r *http.Request) {
 
 // HealthResponse contains the health check response data
 type HealthResponse struct {
-	Status            string                 `json:"status"`
-	Uptime            string                 `json:"uptime"`
-	ActiveTransfers   int                    `json:"active_transfers"`
-	IncompleteCount   int                    `json:"incomplete_count"`
-	TotalDownloadRate int64                  `json:"total_download_rate_bytes"`
-	Transfers         []TransferHealthStatus `json:"transfers,omitempty"`
-	WorkerPool        *WorkerPoolHealth      `json:"worker_pool,omitempty"`
-	PutioTransfers    *PutioTransfersHealth  `json:"putio_transfers,omitempty"`
-	Issues            []string               `json:"issues,omitempty"`
+	MediaValidationEnabled bool                   `json:"media_validation_enabled"`
+	Status                 string                 `json:"status"`
+	Uptime                 string                 `json:"uptime"`
+	ActiveTransfers        int                    `json:"active_transfers"`
+	IncompleteCount        int                    `json:"incomplete_count"`
+	TotalDownloadRate      int64                  `json:"total_download_rate_bytes"`
+	Transfers              []TransferHealthStatus `json:"transfers,omitempty"`
+	WorkerPool             *WorkerPoolHealth      `json:"worker_pool,omitempty"`
+	PutioTransfers         *PutioTransfersHealth  `json:"putio_transfers,omitempty"`
+	Issues                 []string               `json:"issues,omitempty"`
 }
 
 // TransferHealthStatus contains status for a single transfer
 type TransferHealthStatus struct {
+	MediaValidated bool    `json:"media_admitted"`
 	ID             int64   `json:"id"`
 	Name           string  `json:"name"`                 // local folder under the download dir
 	Hash           string  `json:"hash,omitempty"`       // info-hash = Sonarr/Radarr downloadId
@@ -185,13 +187,14 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	watchdog := s.dlManager.GetWatchdog()
 
 	response := HealthResponse{
-		Status:            "healthy",
-		Uptime:            time.Since(serverStartTime).Round(time.Second).String(),
-		ActiveTransfers:   0,
-		IncompleteCount:   0,
-		TotalDownloadRate: 0,
-		Transfers:         []TransferHealthStatus{},
-		Issues:            []string{},
+		MediaValidationEnabled: s.cfg.MediaValidationEnabled,
+		Status:                 "healthy",
+		Uptime:                 time.Since(serverStartTime).Round(time.Second).String(),
+		ActiveTransfers:        0,
+		IncompleteCount:        0,
+		TotalDownloadRate:      0,
+		Transfers:              []TransferHealthStatus{},
+		Issues:                 []string{},
 	}
 
 	// Get all active transfers from coordinator
@@ -213,6 +216,7 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 		}
 
 		status := TransferHealthStatus{
+			MediaValidated: s.cfg.MediaValidationEnabled && s.dlManager.MediaReady(snapshot.ID),
 			ID:             snapshot.ID,
 			Name:           snapshot.Name,
 			Hash:           snapshot.Hash,

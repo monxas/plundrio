@@ -296,6 +296,10 @@ func (m *Manager) downloadFile(state *DownloadState) error {
 			return fmt.Errorf("download incomplete: %s", state.Name)
 		}
 
+		if err := m.validateLocalFile(state.TransferID, state.FileID, targetPath); err != nil {
+			return err
+		}
+
 		// Log completion
 		elapsed := time.Since(state.StartTime).Seconds()
 		totalSize := resp.Size()

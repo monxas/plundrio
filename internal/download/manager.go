@@ -6,6 +6,7 @@ import (
 	"github.com/elsbrock/plundrio/internal/api"
 	"github.com/elsbrock/plundrio/internal/config"
 	"github.com/elsbrock/plundrio/internal/log"
+	"github.com/elsbrock/plundrio/internal/mediavalidation"
 	"github.com/elsbrock/plundrio/internal/metrics"
 	"github.com/elsbrock/plundrio/internal/naming"
 )
@@ -35,7 +36,8 @@ type Manager struct {
 	processor  *TransferProcessor // Handles transfer processing
 	watchdog   *Watchdog          // Monitors system health
 	retryQueue *RetryQueue        // Manages failed download retries
-	metrics    *metrics.Metrics   // Prometheus metrics
+	validation *mediavalidation.Validator
+	metrics    *metrics.Metrics // Prometheus metrics
 
 	// names maps info-hash -> the release name the client asked for, so the
 	// local folder keeps the release identity even when Put.io renames the
@@ -101,6 +103,14 @@ func New(cfg *config.Config, client *api.Client) *Manager {
 		stopChan:    make(chan struct{}),
 		jobs:        make(chan downloadJob, workerCount*dlConfig.BufferMultiple),
 		activeFiles: sync.Map{},
+	}
+
+	if cfg.MediaValidationEnabled {
+		stateDir := cfg.MediaValidationStateDir
+		if stateDir == "" {
+			stateDir = "/config/media-validation"
+		}
+		m.validation = mediavalidation.New(cfg.TargetDir, stateDir, mediavalidation.ProcessProbe)
 	}
 
 	// Initialize coordinator, processor, watchdog, retry queue, and metrics

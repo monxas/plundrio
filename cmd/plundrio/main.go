@@ -14,6 +14,7 @@ import (
 	"github.com/elsbrock/plundrio/internal/config"
 	"github.com/elsbrock/plundrio/internal/download"
 	"github.com/elsbrock/plundrio/internal/log"
+	"github.com/elsbrock/plundrio/internal/mediavalidation"
 	"github.com/elsbrock/plundrio/internal/naming"
 	"github.com/elsbrock/plundrio/internal/server"
 	"github.com/spf13/cobra"
@@ -188,12 +189,14 @@ var runCmd = &cobra.Command{
 
 		// Initialize configuration
 		cfg := &config.Config{
-			TargetDir:          targetDir,
-			PutioFolder:        putioFolder,
-			OAuthToken:         oauthToken,
-			ListenAddr:         listenAddr,
-			WorkerCount:        workerCount,
-			DisableSessionAuth: disableSessionAuth,
+			TargetDir:               targetDir,
+			PutioFolder:             putioFolder,
+			OAuthToken:              oauthToken,
+			ListenAddr:              listenAddr,
+			MediaValidationEnabled:  viper.GetBool("media-validation-enabled"),
+			MediaValidationStateDir: viper.GetString("media-validation-state-dir"),
+			WorkerCount:             workerCount,
+			DisableSessionAuth:      disableSessionAuth,
 
 			// Sonarr/Radarr integration
 			SonarrURL:    sonarrURL,
@@ -432,6 +435,8 @@ var getTokenCmd = &cobra.Command{
 
 func init() {
 	// Run command flags
+	runCmd.Flags().Bool("media-validation-enabled", false, "Validate local videos before publishing completion")
+	runCmd.Flags().String("media-validation-state-dir", "/config/media-validation", "Private persistent validation journal")
 	runCmd.Flags().String("config", "", "Config file (default $HOME/.plundrio.yaml)")
 	runCmd.Flags().StringP("target", "t", "", "Target directory for downloads (required)")
 	runCmd.Flags().StringP("folder", "f", "plundrio", "Put.io folder name")
@@ -476,6 +481,9 @@ func init() {
 }
 
 func main() {
+	if mediavalidation.HandleProbeHelper(os.Args) {
+		return
+	}
 	if err := rootCmd.Execute(); err != nil {
 		log.Fatal("main").Err(err).Msg("Command execution failed")
 	}
