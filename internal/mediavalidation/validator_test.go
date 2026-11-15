@@ -257,3 +257,21 @@ func TestChangedAfterProbeCannotCommitCompletion(t *testing.T) {
 		t.Fatal("changed file committed from an old probe")
 	}
 }
+
+func TestTailUsesVerifiedStreamIndex(t *testing.T) {
+	root, p := fixture(t)
+	probe := func(ctx context.Context, args []string) ([]byte, error) {
+		if strings.Contains(strings.Join(args, " "), "packet=pts_time") {
+			for i, a := range args {
+				if a == "-select_streams" && args[i+1] != "2" {
+					t.Fatalf("tail selected wrong stream: %v", args)
+				}
+			}
+			return []byte(`{"packets":[{"pts_time":"9.9","duration_time":"0.1"}]}`), nil
+		}
+		return []byte(`{"format":{"duration":"10","size":"7"},"streams":[{"index":0,"codec_type":"audio"},{"index":1,"codec_type":"video","disposition":{"attached_pic":1}},{"index":2,"codec_type":"video"}]}`), nil
+	}
+	if r := New(root, t.TempDir(), probe).Check(context.Background(), p); !r.Accepted() {
+		t.Fatal(r)
+	}
+}

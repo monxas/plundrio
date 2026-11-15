@@ -172,6 +172,7 @@ type metadata struct {
 		Size     string `json:"size"`
 	} `json:"format"`
 	Streams []struct {
+		Index       int    `json:"index"`
 		Type        string `json:"codec_type"`
 		Duration    string `json:"duration"`
 		Start       string `json:"start_time"`
@@ -225,7 +226,7 @@ func (v *Validator) Check(ctx context.Context, p string) Result {
 		}
 		probeCtx, cancel := context.WithTimeout(ctx, v.timeout)
 		defer cancel()
-		args := append(baseArgs(), "-show_entries", "format=duration,start_time,size:stream=codec_type,duration,start_time:stream_disposition=attached_pic", "-of", "json", safe)
+		args := append(baseArgs(), "-show_entries", "format=duration,start_time,size:stream=index,codec_type,duration,start_time:stream_disposition=attached_pic", "-of", "json", safe)
 		raw, err := v.probe(probeCtx, args)
 		if err != nil {
 			r.Reason = "probe_failed"
@@ -247,10 +248,12 @@ func (v *Validator) Check(ctx context.Context, p string) Result {
 					r.Reason = "invalid_duration_or_size"
 				} else {
 					streamFound := false
+					streamIndex := 0
 					start, _ := number(m.Format.Start)
 					for _, s := range m.Streams {
 						if s.Type == "video" && s.Disposition.AttachedPic == 0 {
 							streamFound = true
+							streamIndex = s.Index
 							if d, ok := number(s.Duration); ok && d > 0 {
 								duration = d
 							}
@@ -265,7 +268,7 @@ func (v *Validator) Check(ctx context.Context, p string) Result {
 						r.Reason = "missing_video_stream"
 					} else {
 						seek := math.Max(start, start+duration-10)
-						tailArgs := append(baseArgs(), "-select_streams", "V:0", "-read_intervals", fmt.Sprintf("%.6f%%", seek), "-show_packets", "-show_entries", "packet=pts_time,duration_time", "-of", "json", safe)
+						tailArgs := append(baseArgs(), "-select_streams", strconv.Itoa(streamIndex), "-read_intervals", fmt.Sprintf("%.6f%%", seek), "-show_packets", "-show_entries", "packet=pts_time,duration_time", "-of", "json", safe)
 						tail, tailErr := v.probe(probeCtx, tailArgs)
 						var pk packets
 						if tailErr != nil || len(tail) > maxJSON || json.Unmarshal(tail, &pk) != nil {
