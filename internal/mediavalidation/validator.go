@@ -265,7 +265,7 @@ func (v *Validator) Check(ctx context.Context, p string) Result {
 						r.Reason = "missing_video_stream"
 					} else {
 						seek := math.Max(start, start+duration-10)
-						tailArgs := append(baseArgs(), "-select_streams", "V:0", "-read_intervals", fmt.Sprintf("%.6f%%", seek), "-show_entries", "packet=pts_time,duration_time", "-of", "json", safe)
+						tailArgs := append(baseArgs(), "-select_streams", "V:0", "-read_intervals", fmt.Sprintf("%.6f%%", seek), "-show_packets", "-show_entries", "packet=pts_time,duration_time", "-of", "json", safe)
 						tail, tailErr := v.probe(probeCtx, tailArgs)
 						var pk packets
 						if tailErr != nil || len(tail) > maxJSON || json.Unmarshal(tail, &pk) != nil {
