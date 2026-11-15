@@ -272,7 +272,7 @@ func (v *Validator) Check(ctx context.Context, p string) Result {
 						// Short clips start at the beginning already. Avoid seeking to
 						// zero: some ffprobe versions return an empty MP4 packet set.
 						if seek > start {
-							tailArgs = append(tailArgs, "-read_intervals", fmt.Sprintf("%.6f%%", seek))
+							tailArgs = append(tailArgs, "-read_intervals", fmt.Sprintf("%.6f%%+%.6f", seek, duration+10))
 						}
 						tailArgs = append(tailArgs, "-show_packets", "-show_entries", "packet=pts_time,duration_time", "-of", "json", safe)
 						tail, tailErr := v.probe(probeCtx, tailArgs)
