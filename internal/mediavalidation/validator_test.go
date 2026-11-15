@@ -190,6 +190,7 @@ func TestActualFFprobeHealthyAndTruncatedFixtures(t *testing.T) {
 		command.Stdout = &out
 		command.Stderr = &stderr
 		e := command.Run()
+		t.Logf("local fixture ffprobe %v => %s", args, out.Bytes())
 		if e == nil && stderr.Len() > 0 {
 			e = errors.New("ffprobe_error")
 		}
