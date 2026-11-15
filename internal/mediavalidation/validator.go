@@ -268,7 +268,13 @@ func (v *Validator) Check(ctx context.Context, p string) Result {
 						r.Reason = "missing_video_stream"
 					} else {
 						seek := math.Max(start, start+duration-10)
-						tailArgs := append(baseArgs(), "-select_streams", strconv.Itoa(streamIndex), "-read_intervals", fmt.Sprintf("%.6f%%", seek), "-show_packets", "-show_entries", "packet=pts_time,duration_time", "-of", "json", safe)
+						tailArgs := append(baseArgs(), "-select_streams", strconv.Itoa(streamIndex))
+						// Short clips start at the beginning already. Avoid seeking to
+						// zero: some ffprobe versions return an empty MP4 packet set.
+						if seek > start {
+							tailArgs = append(tailArgs, "-read_intervals", fmt.Sprintf("%.6f%%", seek))
+						}
+						tailArgs = append(tailArgs, "-show_packets", "-show_entries", "packet=pts_time,duration_time", "-of", "json", safe)
 						tail, tailErr := v.probe(probeCtx, tailArgs)
 						var pk packets
 						if tailErr != nil || len(tail) > maxJSON || json.Unmarshal(tail, &pk) != nil {

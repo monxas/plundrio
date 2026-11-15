@@ -202,6 +202,14 @@ func TestActualFFprobeHealthyAndTruncatedFixtures(t *testing.T) {
 		t.Fatalf("healthy fixture rejected: %s", raw)
 	}
 
+	long := filepath.Join(root, "long.mp4")
+	cmd = exec.Command(ffmpeg, "-v", "error", "-f", "lavfi", "-i", "color=c=blue:s=64x64:r=10", "-t", "14", "-c:v", "mpeg4", "-pix_fmt", "yuv420p", long)
+	if raw, e := cmd.CombinedOutput(); e != nil {
+		t.Fatalf("generate long local fixture: %v %s", e, raw)
+	}
+	if r := v.Check(context.Background(), long); !r.Accepted() {
+		t.Fatalf("nonzero tail seek rejected: %+v", r)
+	}
 	data, _ := os.ReadFile(healthy)
 	disguised := filepath.Join(root, "renamed.txt")
 	os.WriteFile(disguised, data, 0600)
