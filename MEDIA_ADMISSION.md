@@ -11,8 +11,11 @@ exact local size and packets reaching its declared end. A fixed signature prefix
 also catches common video formats renamed as auxiliary files. ZIP/RAR/7z remain
 held until supported extraction is available. This is structural and duration
 validation, not proof that every frame can decode. Invalid originals remain on
-disk and do not retry for the same identity after restart. Unknown environment
-failures remain pending and cannot become complete. RPC only reads journals and
+disk and do not retry for the same identity after restart. An ffprobe error is
+only a rejection after it repeats on 3 checks of the same file identity (the
+count is journaled and survives restarts); before that the file stays pending
+and is probed again. Unknown environment failures remain pending and cannot
+become complete. RPC only reads journals and
 file metadata; it never probes or downloads.
 
 The helper accepts only local file protocols, clears service credentials and

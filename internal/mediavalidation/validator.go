@@ -23,6 +23,11 @@ import (
 const Policy = 1
 const maxJSON = 2 << 20
 
+// probeAttempts is how many failed ffprobe runs on the same file identity are
+// needed before a probe error counts as a real rejection. A healthy file can
+// fail one run (resource limit, NFS hiccup); a broken one fails every time.
+const probeAttempts = 3
+
 type Identity struct {
 	Device  uint64 `json:"device"`
 	Inode   uint64 `json:"inode"`
@@ -37,6 +42,7 @@ type Result struct {
 	Reason     string    `json:"reason"`
 	Duration   float64   `json:"duration_seconds,omitempty"`
 	LastPacket float64   `json:"last_packet_seconds,omitempty"`
+	Attempts   int       `json:"probe_attempts,omitempty"`
 	Observed   time.Time `json:"observed_at"`
 }
 
@@ -205,10 +211,22 @@ func (v *Validator) Check(ctx context.Context, p string) Result {
 	r.Identity = before
 	v.mu.Lock()
 	var cached Result
-	cachedOK := readJSON(v.filePath(safe), &cached) == nil && cached.Policy == Policy && cached.Identity == before && (cached.Accepted() || cached.Status == "rejected")
+	sameFile := readJSON(v.filePath(safe), &cached) == nil && cached.Policy == Policy && cached.Identity == before
 	v.mu.Unlock()
-	if cachedOK {
+	if sameFile && (cached.Accepted() || cached.Status == "rejected") {
 		return cached
+	}
+	previousAttempts := 0
+	if sameFile && cached.Status == "pending" {
+		previousAttempts = cached.Attempts
+	}
+	probeError := func(reason string) {
+		r.Attempts = previousAttempts + 1
+		r.Reason = reason
+		r.Status = "pending"
+		if r.Attempts >= probeAttempts {
+			r.Status = "rejected"
+		}
 	}
 	signedVideo, signedArchive := signature(safe)
 	if ext := strings.ToLower(filepath.Ext(safe)); signedArchive || ext == ".zip" || ext == ".rar" || ext == ".7z" {
@@ -229,9 +247,9 @@ func (v *Validator) Check(ctx context.Context, p string) Result {
 		args := append(baseArgs(), "-show_entries", "format=duration,start_time,size:stream=index,codec_type,duration,start_time:stream_disposition=attached_pic", "-of", "json", safe)
 		raw, err := v.probe(probeCtx, args)
 		if err != nil {
-			r.Reason = "probe_failed"
-			r.Status = "rejected"
+			probeError("probe_failed")
 			if errors.Is(err, exec.ErrNotFound) || probeCtx.Err() != nil {
+				r.Attempts = 0
 				r.Status = "pending"
 				r.Reason = "probe_unavailable_or_timeout"
 			}
@@ -278,9 +296,9 @@ func (v *Validator) Check(ctx context.Context, p string) Result {
 						tail, tailErr := v.probe(probeCtx, tailArgs)
 						var pk packets
 						if tailErr != nil || len(tail) > maxJSON || json.Unmarshal(tail, &pk) != nil {
-							r.Reason = "tail_probe_failed"
-							r.Status = "rejected"
+							probeError("tail_probe_failed")
 							if probeCtx.Err() != nil {
+								r.Attempts = 0
 								r.Reason = "probe_unavailable_or_timeout"
 								r.Status = "pending"
 							}
@@ -313,7 +331,7 @@ func (v *Validator) Check(ctx context.Context, p string) Result {
 		r.Reason = "file_changed_during_validation"
 		return r
 	}
-	if r.Status != "pending" {
+	if r.Status != "pending" || r.Attempts > 0 {
 		v.mu.Lock()
 		e = writeJSON(v.filePath(safe), r)
 		v.mu.Unlock()

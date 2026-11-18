@@ -283,3 +283,56 @@ func TestTailUsesVerifiedStreamIndex(t *testing.T) {
 		t.Fatal(r)
 	}
 }
+func TestProbeFailureRetriesBeforeRejecting(t *testing.T) {
+	t.Run("transient", func(t *testing.T) {
+		root, p := fixture(t)
+		var calls atomic.Int32
+		healthy := fakeProbe(7, 9.9, &calls)
+		failed := false
+		v := New(root, t.TempDir(), func(ctx context.Context, args []string) ([]byte, error) {
+			if !failed {
+				failed = true
+				return nil, errors.New("ffprobe_reported_errors")
+			}
+			return healthy(ctx, args)
+		})
+		if r := v.Check(context.Background(), p); r.Status != "pending" || r.Reason != "probe_failed" || r.Attempts != 1 {
+			t.Fatalf("first failure must stay pending: %+v", r)
+		}
+		if v.Rejected(p) {
+			t.Fatal("one probe failure must not be a cached rejection")
+		}
+		if r := v.Check(context.Background(), p); !r.Accepted() {
+			t.Fatalf("healthy file not accepted on retry: %+v", r)
+		}
+	})
+	t.Run("persistent", func(t *testing.T) {
+		root, p := fixture(t)
+		state := t.TempDir()
+		var calls int
+		probe := func(ctx context.Context, args []string) ([]byte, error) {
+			calls++
+			return nil, errors.New("ffprobe_reported_errors")
+		}
+		for i := 1; i < probeAttempts; i++ {
+			// A new validator per attempt proves the counter survives restarts.
+			if r := New(root, state, probe).Check(context.Background(), p); r.Status != "pending" || r.Attempts != i {
+				t.Fatalf("attempt %d: %+v", i, r)
+			}
+		}
+		v := New(root, state, probe)
+		if r := v.Check(context.Background(), p); r.Status != "rejected" || r.Reason != "probe_failed" {
+			t.Fatalf("last attempt must reject: %+v", r)
+		}
+		before := calls
+		if r := v.Check(context.Background(), p); r.Status != "rejected" || calls != before {
+			t.Fatalf("rejection must be cached: %+v calls=%d/%d", r, calls, before)
+		}
+		if err := os.Chtimes(p, time.Now(), time.Now().Add(time.Second)); err != nil {
+			t.Fatal(err)
+		}
+		if r := v.Check(context.Background(), p); r.Status != "pending" || r.Attempts != 1 {
+			t.Fatalf("changed file must restart the count: %+v", r)
+		}
+	})
+}
