@@ -91,6 +91,8 @@ func (p *TransferProcessor) checkTransfers() {
 		Int("api_transfers_count", len(transfers)).
 		Msg("Retrieved transfers from API")
 
+	p.forgetVanishedProcessed(transfers)
+
 	// Reset transfer status tracking
 	p.transfers = make(map[string][]*putio.Transfer)
 
@@ -635,6 +637,35 @@ func (p *TransferProcessor) processErroredTransfers() {
 			}
 		}
 	}
+}
+
+// forgetVanishedProcessed drops the local context of Processed transfers that
+// no longer exist on put.io. While the transfer exists, torrent-get needs the
+// context to report it as done; once it is gone nothing reads it, and keeping
+// it would list the transfer in /health until restart (plundrio-ecosystem#39).
+// Only Processed is pruned: Failed/Cancelled contexts may still own downloads.
+func (p *TransferProcessor) forgetVanishedProcessed(current []*putio.Transfer) {
+	present := make(map[int64]bool, len(current))
+	for _, t := range current {
+		present[t.ID] = true
+	}
+	p.manager.coordinator.transfers.Range(func(key, value interface{}) bool {
+		id := key.(int64)
+		if present[id] {
+			return true
+		}
+		ctx := value.(*TransferContext)
+		ctx.mu.RLock()
+		processed, name := ctx.State == TransferLifecycleProcessed, ctx.Name
+		ctx.mu.RUnlock()
+		if processed {
+			p.manager.coordinator.transfers.Delete(id)
+			p.processedTransfers.Delete(id)
+			log.Info("transfers").Int64("id", id).Str("name", name).
+				Msg("Forgot processed transfer no longer on put.io")
+		}
+		return true
+	})
 }
 
 // MarkTransferProcessed marks a transfer as processed locally

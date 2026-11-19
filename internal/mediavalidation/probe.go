@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"runtime"
+	"strings"
 	"syscall"
 )
 
@@ -40,10 +41,38 @@ func ProcessProbe(ctx context.Context, args []string) ([]byte, error) {
 		}
 		return nil, e
 	}
-	if stderr.Len() > 0 {
+	if stderrHasErrors(stderr.Bytes()) {
 		return nil, errors.New("ffprobe_reported_errors")
 	}
 	return out.Bytes(), nil
+}
+
+// benignProbeMessages is a closed list of ffprobe diagnostics that say nothing
+// about the decodability of the media (the tail check still decides that).
+// Anything else on stderr keeps failing the probe.
+var benignProbeMessages = map[string]bool{
+	// YTS mp4s reference a chapter track they don't ship (plundrio-ecosystem#39).
+	"Referenced QT chapter track not found": true,
+}
+
+// stderrHasErrors reports whether ffprobe's stderr holds anything besides
+// benign diagnostics. Lines look like "[mov,mp4,... @ 0x55d] message".
+func stderrHasErrors(b []byte) bool {
+	for _, line := range strings.Split(string(b), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		if strings.HasPrefix(line, "[") {
+			if i := strings.Index(line, "] "); i > 0 {
+				line = line[i+2:]
+			}
+		}
+		if !benignProbeMessages[line] {
+			return true
+		}
+	}
+	return false
 }
 
 // HandleProbeHelper must be called before Cobra/config/logging initialization.
