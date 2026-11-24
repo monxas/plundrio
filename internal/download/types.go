@@ -80,7 +80,6 @@ type TransferContext struct {
 	validationActive      int       // bounded probes are retained local work, not stalled network IO
 	admissionPendingFiles int       // all pending initial/retry files, including channel backlog
 	admissionActiveFiles  int       // files whose payload attempt has actually started
-	admissionHeldFiles    int       // intentional local admission holds, protected by mu
 	admissionStartedAt    time.Time // watchdog clock when payload starts from idle pending state
 	mu                    sync.RWMutex
 }

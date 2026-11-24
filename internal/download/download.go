@@ -25,12 +25,6 @@ func (m *Manager) downloadWorker() {
 				return
 			}
 
-			if !m.waitForDownloadAdmission(job) {
-				m.changeAdmissionPending(job.TransferID, -1)
-				m.activeFiles.Delete(job.FileID)
-				return
-			}
-
 			// Update active downloads metric
 			if m.metrics != nil {
 				m.metrics.SetActiveDownloads(int(m.watchdog.activeDownloads.Load()) + 1)
